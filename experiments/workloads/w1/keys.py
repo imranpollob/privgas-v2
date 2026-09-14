@@ -31,7 +31,8 @@ ROLES = (
     "destination",       # receives the token in step 2 (never signs)
     "bundler",           # in-repo instrumented bundler EOA (B1/B2)
     "beneficiary",       # EntryPoint beneficiary (never signs)
-    "sponsor_operator",  # B2 Paymaster owner (deposit + allowlist)
+    "sponsor_operator",  # owner of both Paymasters (deposits; B2-Allowlist allowlisting)
+    "sponsor_signer",    # B2-Signature authorization key; signs off chain, never transacts
     "established_wallet",  # the actor's pre-existing wallet W; never on chain in W1
     "block_producer",    # anvil coinbase, receives priority fees (never signs)
     "intruder",          # key for negative tests only

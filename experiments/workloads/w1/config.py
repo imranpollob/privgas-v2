@@ -22,10 +22,29 @@ ENTRYPOINT_VERSION = "0.9.0"
 ENTRYPOINT_SOURCE_COMMIT = "b36a1ed52ae00da6f8a4c8d50181e2877e4fa410"
 ENTRYPOINT_SOURCE_REPO = "https://github.com/eth-infinitism/account-abstraction"
 
-BASELINE_EXPERIMENT_IDS = {
-    "B0": "baselines/b0-w1",
-    "B1": "baselines/b1-w1",
-    "B2": "baselines/b2-w1",
+#: (baseline_id, workload_id) -> experiment_id. B0 has no warm variant (an EOA
+#: has nothing to pre-deploy); B2 warm variants are not implemented (optional,
+#: no new semantics).
+EXPERIMENT_IDS = {
+    ("B0", "W1-cold"): "baselines/b0-w1-cold",
+    ("B1", "W1-cold"): "baselines/b1-w1-cold",
+    ("B1", "W1-warm"): "baselines/b1-w1-warm",
+    ("B2-Allowlist", "W1-cold"): "baselines/b2-allowlist-w1-cold",
+    ("B2-Signature", "W1-cold"): "baselines/b2-signature-w1-cold",
+}
+
+#: run_id suffixes must be a single [a-z0-9]{1,16} token (RE_RUN_ID).
+RUN_ID_SUFFIX = {
+    ("B0", "W1-cold"): "b0cold",
+    ("B1", "W1-cold"): "b1cold",
+    ("B1", "W1-warm"): "b1warm",
+    ("B2-Allowlist", "W1-cold"): "b2allowcold",
+    ("B2-Signature", "W1-cold"): "b2sigcold",
+}
+
+PAYMASTER_OF = {
+    "B2-Allowlist": "ObservablePaymaster",
+    "B2-Signature": "SignatureVerifyingPaymaster",
 }
 
 
@@ -79,8 +98,14 @@ class W1Config:
         return self._u("userop", "call_gas_limit")
 
     @property
-    def pre_verification_gas(self) -> int:
-        return self._u("userop", "pre_verification_gas")
+    def provisional_pre_verification_gas(self) -> int:
+        """Only for the calibration dry run; the measured op uses the calibrated value."""
+        return self._u("userop", "provisional_pre_verification_gas")
+
+    @property
+    def paymaster_signature_validity(self) -> tuple:
+        return (self._u("userop", "paymaster_signature_valid_until"),
+                self._u("userop", "paymaster_signature_valid_after"))
 
     @property
     def paymaster_verification_gas_limit(self) -> int:
@@ -102,10 +127,10 @@ class W1Config:
         return self._u("funding", key)
 
     # derived quantities the baselines must agree on
-    def required_prefund(self, with_paymaster: bool) -> int:
+    def required_prefund(self, with_paymaster: bool, pre_verification_gas: int) -> int:
         """EntryPoint v0.9 _getRequiredPrefund for this config."""
         gas = (self.verification_gas_limit + self.call_gas_limit
-               + self.pre_verification_gas)
+               + pre_verification_gas)
         if with_paymaster:
             gas += (self.paymaster_verification_gas_limit
                     + self.paymaster_post_op_gas_limit)
@@ -115,12 +140,6 @@ class W1Config:
     def b0_eth_allowance(self) -> int:
         """ETH the B0 sender supplies: exactly enough for the action tx."""
         return self.gas_limit("b0_action") * self.max_fee
-
-    @property
-    def b1_eth_allowance(self) -> int:
-        """ETH the B1 sender supplies: exactly the EntryPoint required prefund."""
-        return self.required_prefund(with_paymaster=False)
-
 
 def baseline_dir(root: Optional[Path] = None) -> Path:
     return (Path(root) if root else repo_root()) / BASELINE_DIR

@@ -30,8 +30,10 @@ experiments/
   labels/               READ side: secret ground truth, evaluation, self-check
   tests/                schema, boundary, label-join, integration, self-check
 
-  workloads/w1/         REAL B0/B1/B2 W1 runner: signed txs on anvil, in-repo
-                        instrumented bundler, cost reconciliation, raw -> records
+  workloads/w1/         REAL W1 runner (B0, B1, B2-Allowlist, B2-Signature;
+                        W1-cold/W1-warm): signed txs on anvil, instrumented
+                        bundler, preVerificationGas calibration (pvg.py), cost
+                        reconciliation, raw -> records, fairness (compare.py)
     tests/              live anvil tests + dependency pin
   privacy/ liveness/ settlement/ analysis/   (experiment defs, empty)
 ```
@@ -70,17 +72,20 @@ make recorder-examples    # regenerate the synthetic B0/B1/B2 example runs
 make recorder-selfcheck   # scan data/public/ for leaked keys and values
 make recorder-docs        # regenerate the field tables in the schema doc
 make baselines-test       # forge + live anvil tests of the real B0/B1/B2
-make run-matched-baselines SEED=<n>   # one real W1 run per baseline, recorded
+make run-matched-baselines SEED=<n>   # real runs for all variants, recorded
 ```
 
 ## Status
 
-B0, B1 and B2 are implemented (`baselines/w1_b0_b2`, `workloads/w1`,
-`docs/w1-baselines.md`) and record `data_origin: "measured"`. The example runs
+B0, B1, B2-Signature and auxiliary B2-Allowlist are implemented, with
+workloads W1-cold (primary) and W1-warm (B1 ablation) (`baselines/w1_b0_b2`,
+`workloads/w1`, `docs/w1-baselines.md`), and record `data_origin: "measured"`.
+The AA baselines use an in-repo INSTRUMENTED EXPERIMENTAL bundler that does not
+establish ERC-7562 or production compatibility. The example runs
 under `recorder/examples/` remain synthetic fixtures — every row carries
 `data_origin: "synthetic_fixture"` and a `synthetic-` run_id, and the validator
 enforces both. They document the schema. They are not measurements.
-Schema version: 2.0.0.
+Schema version: 3.0.0.
 
 No attack, model, metric or privacy mechanism lives here yet. The recorder
 observes experiments; it makes no privacy claim of its own.

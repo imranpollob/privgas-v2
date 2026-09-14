@@ -1,27 +1,34 @@
-"""Execute one real W1 run for B0, B1 or B2 against a throwaway anvil.
+"""Execute one real W1 run against a throwaway anvil.
+
+Baselines: B0, B1, B2-Allowlist, B2-Signature. Workloads: W1-cold (primary)
+and W1-warm (AA-only ablation, implemented for B1).
 
 Phases
 ------
-**Setup** (byte-for-byte the same transaction sequence for every baseline,
-so contract addresses and chain state are identical when the workflow
-starts): the faucet funds deployer / asset sender / bundler / sponsor
-operator; the deployer deploys EntryPoint, SimpleAccountFactory, W1Token and
-ObservablePaymaster; the sponsor operator deposits into the EntryPoint for
-the Paymaster. Setup is environment, not W1 cost.
+**setup** -- byte-for-byte the same transaction sequence for every baseline
+and workload, so contract addresses and chain state match when the workflow
+starts: the faucet funds deployer / asset sender / bundler / sponsor operator /
+beneficiary; the deployer deploys EntryPoint, SimpleAccountFactory, W1Token,
+ObservablePaymaster and SignatureVerifyingPaymaster; the sponsor operator
+deposits into the EntryPoint for both paymasters. Environment, not W1 cost.
 
-**Workflow** (W1; the only part that is costed and recorded as events):
+**warmup** (W1-warm only) -- the sender funds the counterfactual account's
+prefund and the bundler includes a deploy-only UserOperation (initCode, empty
+callData). Excluded from the measured action cost; recorded separately.
 
-    step  B0 sender-funded EOA       B1 sender-funded account     B2 observable Paymaster
-    w1    sender: token.transfer     sender: token.transfer       sender: token.transfer
-          -> fresh EOA               -> counterfactual account    -> counterfactual account
-    w2    sender: ETH allowance      sender: ETH = required       sponsor operator:
-          -> fresh EOA               prefund -> account           paymaster.setSponsored(account)
-    w3    fresh EOA: token.transfer  bundler: handleOps([op])     bundler: handleOps([op])
-          -> destination             op = deploy + execute(       op = same as B1 + paymasterAndData
-                                     token.transfer(dest))
+**workflow** (the measured W1 action)::
 
-Outputs (see package docstring): a role-free chain dump and bundler log under
-data/raw/, and role assignments + cost reconciliation under data/private/.
+    step  B0                    B1                        B2-Allowlist              B2-Signature
+    w1    sender: token.transfer -> recipient account (identical in all)
+    w2    sender: ETH allowance sender: ETH = prefund     sponsor operator:         (none: authorization
+                                                          setSponsored(account)      is off chain)
+    w3    EOA: token.transfer   bundler: handleOps([op])  bundler: handleOps([op])  bundler: handleOps([op])
+
+For every AA operation the bundler first calibrates a break-even
+preVerificationGas (``pvg.py``); the wallet then signs the final op.
+
+Outputs: a role-free chain dump and bundler log under data/raw/, and role
+assignments under data/private/ (see package docstring).
 """
 
 from __future__ import annotations
@@ -29,9 +36,9 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from eth_abi import decode, encode
 from eth_utils import to_checksum_address
@@ -40,16 +47,19 @@ from ...recorder.digest import commit_to_value
 from ...recorder.provenance import repo_root
 from . import abi
 from .artifacts import Artifact, dependency_tree_digest, forge_build, load_all
-from .bundler import BUNDLER_ID, SIMULATION_METHOD, BundlerOutcome, InstrumentedBundler
+from .bundler import BUNDLER_ID, SIMULATION_METHOD, InstrumentedBundler
 from .chain import Chain, SentTx, TxRejected
 from .config import (
     ENTRYPOINT_SOURCE_COMMIT,
     ENTRYPOINT_SOURCE_REPO,
     ENTRYPOINT_VERSION,
+    EXPERIMENT_IDS,
+    PAYMASTER_OF,
     W1Config,
     load_config,
 )
 from .keys import RoleKeys, faucet, role_keys
+from .pvg import CalibrationError
 from .rpc import ANVIL_HARDFORK, AnvilProcess
 from .userop import (
     UserOp,
@@ -57,11 +67,13 @@ from .userop import (
     ep_deposit,
     ep_nonce,
     init_code,
+    sign_paymaster,
     sign_userop,
 )
 
-BASELINES = ("B0", "B1", "B2")
-DUMP_VERSION = "1"
+BASELINES = ("B0", "B1", "B2-Allowlist", "B2-Signature")
+WORKLOADS = ("W1-cold", "W1-warm")
+DUMP_VERSION = "2"
 
 
 class WorkflowFailure(RuntimeError):
@@ -77,13 +89,15 @@ class WorkflowFailure(RuntimeError):
 class Variation:
     """Deliberate deviations used ONLY by negative tests. Default = canonical W1."""
 
-    eth_allowance_delta: int = 0       # B0/B1: add (negative: subtract) wei
-    skip_sponsorship: bool = False     # B2: do not allowlist the account
+    eth_allowance_delta: int = 0          # B0/B1: add (negative: subtract) wei
+    skip_sponsorship: bool = False        # B2-Allowlist: do not allowlist the account
+    wrong_sponsor_signature: bool = False  # B2-Signature: sign with a non-sponsor key
 
 
 @dataclass
 class RunResult:
     baseline_id: str
+    workload_id: str
     seed: int
     chain_dump: Dict[str, Any]
     bundler_log: List[Dict[str, Any]]
@@ -114,7 +128,12 @@ class Environment:
     factory: str
     account_implementation: str
     token: str
-    paymaster: str
+    allowlist_paymaster: str
+    signature_paymaster: str
+
+    def paymaster_for(self, baseline_id: str) -> Optional[str]:
+        return {"B2-Allowlist": self.allowlist_paymaster,
+                "B2-Signature": self.signature_paymaster}.get(baseline_id)
 
 
 def setup_environment(chain: Chain, cfg: W1Config, keys: RoleKeys,
@@ -123,7 +142,8 @@ def setup_environment(chain: Chain, cfg: W1Config, keys: RoleKeys,
     for role, amount in (("deployer", cfg.funding("deployer_eth")),
                          ("asset_sender", cfg.funding("asset_sender_eth")),
                          ("bundler", cfg.funding("bundler_eth")),
-                         ("sponsor_operator", cfg.funding("sponsor_operator_eth"))):
+                         ("sponsor_operator", cfg.funding("sponsor_operator_eth")),
+                         ("beneficiary", cfg.funding("beneficiary_eth"))):
         chain.send(f, label=f"setup_fund_{role}", phase="setup",
                    to=keys.address(role), value=amount,
                    gas=cfg.gas_limit("native_transfer"))
@@ -136,18 +156,24 @@ def setup_environment(chain: Chain, cfg: W1Config, keys: RoleKeys,
     token = _deploy(chain, dep, arts["W1Token"], ["address", "uint256"],
                     [keys.address("asset_sender"), cfg.token_supply], gas,
                     "setup_deploy_token")
-    paymaster = _deploy(chain, dep, arts["ObservablePaymaster"], ["address", "address"],
-                        [ep, keys.address("sponsor_operator")], gas,
-                        "setup_deploy_paymaster")
-    chain.send(keys.account("sponsor_operator"), label="setup_paymaster_deposit",
-               phase="setup", to=paymaster, data=abi.selector(abi.SIG_PM_DEPOSIT),
-               value=cfg.funding("paymaster_deposit"), gas=cfg.gas_limit("setup_call"))
+    operator = keys.address("sponsor_operator")
+    allow_pm = _deploy(chain, dep, arts["ObservablePaymaster"], ["address", "address"],
+                       [ep, operator], gas, "setup_deploy_allowlist_paymaster")
+    sig_pm = _deploy(chain, dep, arts["SignatureVerifyingPaymaster"],
+                     ["address", "address", "address"],
+                     [ep, operator, keys.address("sponsor_signer")], gas,
+                     "setup_deploy_signature_paymaster")
+    for label, pm in (("setup_allowlist_paymaster_deposit", allow_pm),
+                      ("setup_signature_paymaster_deposit", sig_pm)):
+        chain.send(keys.account("sponsor_operator"), label=label, phase="setup", to=pm,
+                   data=abi.selector(abi.SIG_PM_DEPOSIT),
+                   value=cfg.funding("paymaster_deposit"), gas=cfg.gas_limit("setup_call"))
 
     impl_raw = chain.eth_call(factory, abi.selector(abi.SIG_FACTORY_IMPLEMENTATION))
     (impl,) = decode(["address"], bytes.fromhex(impl_raw[2:]))
     return Environment(entrypoint=ep, factory=factory,
-                       account_implementation=to_checksum_address(impl),
-                       token=token, paymaster=paymaster)
+                       account_implementation=to_checksum_address(impl), token=token,
+                       allowlist_paymaster=allow_pm, signature_paymaster=sig_pm)
 
 
 def _token_transfer_data(to: str, amount: int) -> bytes:
@@ -159,36 +185,58 @@ def _erc20_balance(chain: Chain, token: str, who: str, block: int) -> int:
     return int(chain.eth_call(token, data, block=block), 16)
 
 
-def _build_userop(chain: Chain, cfg: W1Config, env: Environment, keys: RoleKeys,
-                  account: str, with_paymaster: bool) -> UserOp:
-    owner = keys.address("recipient")
-    execute = abi.call(abi.SIG_ACCOUNT_EXECUTE, ["address", "uint256", "bytes"],
-                       [env.token, 0,
-                        _token_transfer_data(keys.address("destination"),
-                                             cfg.transfer_amount)])
-    op = UserOp(
-        sender=account,
-        nonce=ep_nonce(chain, env.entrypoint, account, cfg.nonce_key),
-        init_code=init_code(env.factory, owner, cfg.account_salt),
-        call_data=execute,
-        verification_gas_limit=cfg.verification_gas_limit,
-        call_gas_limit=cfg.call_gas_limit,
-        pre_verification_gas=cfg.pre_verification_gas,
-        max_priority_fee_per_gas=cfg.max_priority_fee,
-        max_fee_per_gas=cfg.max_fee,
-    )
-    if with_paymaster:
-        op.paymaster = env.paymaster
-        op.paymaster_verification_gas_limit = cfg.paymaster_verification_gas_limit
-        op.paymaster_post_op_gas_limit = cfg.paymaster_post_op_gas_limit
-    return op
+def _op_builder(chain: Chain, cfg: W1Config, env: Environment, keys: RoleKeys,
+                account: str, baseline_id: str, *, deploy: bool, execute: bool,
+                variation: Variation) -> Callable[[int], UserOp]:
+    """Return ``pvg -> fully signed UserOp`` for this baseline and phase.
+
+    Everything except preVerificationGas is fixed here, so B1, B2-Allowlist and
+    B2-Signature operations differ only in paymasterAndData (and the calibrated
+    preVerificationGas that follows from it).
+    """
+    owner = keys.account("recipient")
+    call_data = b""
+    if execute:
+        call_data = abi.call(abi.SIG_ACCOUNT_EXECUTE, ["address", "uint256", "bytes"],
+                             [env.token, 0,
+                              _token_transfer_data(keys.address("destination"),
+                                                   cfg.transfer_amount)])
+    nonce = ep_nonce(chain, env.entrypoint, account, cfg.nonce_key)
+    pm = env.paymaster_for(baseline_id)
+
+    def build(pvg: int) -> UserOp:
+        op = UserOp(
+            sender=account, nonce=nonce,
+            init_code=init_code(env.factory, owner.address, cfg.account_salt) if deploy else b"",
+            call_data=call_data,
+            verification_gas_limit=cfg.verification_gas_limit,
+            call_gas_limit=cfg.call_gas_limit,
+            pre_verification_gas=pvg,
+            max_priority_fee_per_gas=cfg.max_priority_fee,
+            max_fee_per_gas=cfg.max_fee,
+        )
+        if pm is not None:
+            op.paymaster = pm
+            op.paymaster_verification_gas_limit = cfg.paymaster_verification_gas_limit
+            op.paymaster_post_op_gas_limit = cfg.paymaster_post_op_gas_limit
+        if baseline_id == "B2-Signature":
+            valid_until, valid_after = cfg.paymaster_signature_validity
+            op.paymaster_data = encode(["uint48", "uint48"], [valid_until, valid_after])
+            signer = keys.account("intruder" if variation.wrong_sponsor_signature
+                                  else "sponsor_signer")
+            sign_paymaster(chain, env.entrypoint, op, signer)
+        sign_userop(chain, env.entrypoint, op, owner)
+        return op
+
+    return build
 
 
 def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
-                 variation: Optional[Variation] = None,
-                 build: bool = True) -> RunResult:
-    if baseline_id not in BASELINES:
-        raise ValueError(f"W1 runner supports {BASELINES}, not {baseline_id!r}")
+                 variation: Optional[Variation] = None, build: bool = True,
+                 workload_id: str = "W1-cold") -> RunResult:
+    if (baseline_id, workload_id) not in EXPERIMENT_IDS:
+        raise ValueError(f"unsupported (baseline, workload) {(baseline_id, workload_id)}; "
+                         f"supported: {sorted(EXPERIMENT_IDS)}")
     root = Path(root) if root else repo_root()
     variation = variation or Variation()
     cfg = load_config(root)
@@ -197,6 +245,8 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
     arts = load_all(root)
     keys = role_keys(seed)
     addrs = keys.addresses()
+    aa = baseline_id != "B0"
+    warm = workload_id == "W1-warm"
 
     with AnvilProcess(cfg.chain_id, cfg.base_fee) as anvil:
         chain = Chain(rpc=anvil.rpc, chain_id=cfg.chain_id, base_fee=cfg.base_fee,
@@ -205,48 +255,80 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
         env = setup_environment(chain, cfg, keys, arts)
         setup_end = chain.block_number()
 
-        # The recipient-controlled account: a fresh EOA for B0, the
-        # counterfactual SimpleAccount (owned by the fresh key) for B1/B2.
-        if baseline_id == "B0":
-            recipient_account = addrs["recipient"]
-        else:
-            recipient_account = counterfactual_address(
-                chain, env.factory, addrs["recipient"], cfg.account_salt)
-
+        recipient_account = (addrs["recipient"] if not aa else counterfactual_address(
+            chain, env.factory, addrs["recipient"], cfg.account_salt))
         sender = keys.account("asset_sender")
         labels: Dict[str, str] = {}
-        bundler_obj: Optional[InstrumentedBundler] = None
         userops: List[Dict[str, Any]] = []
+        calibrations: Dict[str, Any] = {}
         failure: Optional[WorkflowFailure] = None
         eth_allowance = 0
+        bundler = (InstrumentedBundler(
+            chain=chain, entrypoint=env.entrypoint, account=keys.account("bundler"),
+            beneficiary=addrs["beneficiary"], bundle_gas_limit=cfg.gas_limit("bundle"))
+            if aa else None)
 
         def step(tx: SentTx) -> SentTx:
+            # Only W1 steps whose failure is itself the measured outcome (the
+            # B0 action, bundles) may revert; a reverted setup-like step would
+            # silently corrupt the run.
+            if tx.label != "w3_recipient_action" and int(tx.receipt["status"], 16) != 1:
+                raise RuntimeError(f"{tx.label} reverted")
             labels[tx.hash] = tx.label
             return tx
 
+        def fund(op: UserOp, label: str, phase: str, record: bool, delta: int = 0) -> int:
+            value = op.required_prefund + delta
+            deployed = chain.code(recipient_account, chain.block_number()) != "0x"
+            gas = cfg.gas_limit("native_transfer_to_deployed_account" if deployed
+                                else "native_transfer")
+            tx = chain.send(sender, label=label, phase=phase, to=recipient_account,
+                            value=value, gas=gas, record=record)
+            if int(tx.receipt["status"], 16) != 1:
+                raise RuntimeError(f"{label}: ETH transfer to the account reverted")
+            if record:
+                step(tx)
+            return value
+
+        def calibrated(label: str, builder, prepare) -> UserOp:
+            try:
+                cal = bundler.calibrate_pre_verification_gas(
+                    label=label, provisional=cfg.provisional_pre_verification_gas,
+                    build_signed_op=builder, prepare=prepare)
+                calibrations[label] = cal.as_dict()
+                return builder(cal.pre_verification_gas)
+            except CalibrationError as e:
+                # Only negative variations reach this: the dry run itself fails
+                # (as a real estimation would), so the op is submitted with the
+                # provisional value and the bundler's simulation records why.
+                calibrations[label] = {"method": "failed", "error": str(e)}
+                return builder(cfg.provisional_pre_verification_gas)
+
+        # --- warmup (W1-warm): deploy the account before the measured action ---
+        if warm:
+            wbuild = _op_builder(chain, cfg, env, keys, recipient_account, baseline_id,
+                                 deploy=True, execute=False, variation=Variation())
+            wop = calibrated("warmup_deploy_bundle", wbuild,
+                             lambda o: fund(o, "calibration_prefund", "calibration", False))
+            fund(wop, "warmup_eth_allowance", "warmup", True)
+            out = bundler.send_user_operation(wop, label="warmup_deploy_bundle", phase="warmup")
+            if not out.accepted:
+                raise RuntimeError(f"warm-up deployment rejected: {out.log[-1]}")
+            userops.append({"label": "warmup_deploy_bundle", "userop_hash": out.userop_hash,
+                            "packed": wop.as_json()})
+            labels[out.bundle.hash] = "warmup_deploy_bundle"
+        warmup_end = chain.block_number()
+
         # --- w1: asset delivery (identical in all baselines) ----------------
-        step(chain.send(sender, label="w1_asset_delivery", phase="workflow",
-                        to=env.token,
+        step(chain.send(sender, label="w1_asset_delivery", phase="workflow", to=env.token,
                         data=_token_transfer_data(recipient_account, cfg.transfer_amount),
                         gas=cfg.gas_limit("erc20_transfer")))
 
-        # --- w2: gas funding mechanism ---------------------------------------
-        if baseline_id in ("B0", "B1"):
-            base = cfg.b0_eth_allowance if baseline_id == "B0" else cfg.b1_eth_allowance
-            eth_allowance = base + variation.eth_allowance_delta
+        if baseline_id == "B0":
+            eth_allowance = cfg.b0_eth_allowance + variation.eth_allowance_delta
             step(chain.send(sender, label="w2_eth_allowance", phase="workflow",
                             to=recipient_account, value=eth_allowance,
                             gas=cfg.gas_limit("native_transfer")))
-        elif not variation.skip_sponsorship:
-            step(chain.send(keys.account("sponsor_operator"),
-                            label="w2_sponsor_allowlist", phase="workflow",
-                            to=env.paymaster,
-                            data=abi.call(abi.SIG_PM_SET_SPONSORED, ["address", "bool"],
-                                          [recipient_account, True]),
-                            gas=cfg.gas_limit("setup_call")))
-
-        # --- w3: the recipient's application action --------------------------
-        if baseline_id == "B0":
             try:
                 step(chain.send(keys.account("recipient"), label="w3_recipient_action",
                                 phase="workflow", to=env.token,
@@ -257,37 +339,49 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                 failure = WorkflowFailure("w3_recipient_action",
                                           {"node_error": str(e.rpc_error)})
         else:
-            bundler_obj = InstrumentedBundler(
-                chain=chain, entrypoint=env.entrypoint, account=keys.account("bundler"),
-                beneficiary=addrs["beneficiary"],
-                bundle_gas_limit=cfg.gas_limit("bundle"))
-            op = _build_userop(chain, cfg, env, keys, recipient_account,
-                               with_paymaster=(baseline_id == "B2"))
-            userop_hash = sign_userop(chain, env.entrypoint, op, keys.account("recipient"))
-            userops.append({"userop_hash": userop_hash, "packed": op.as_json()})
-            outcome: BundlerOutcome = bundler_obj.send_user_operation(
-                op, label="w3_bundle")
-            if outcome.accepted:
-                labels[outcome.bundle.hash] = "w3_bundle"
+            if baseline_id == "B2-Allowlist" and not variation.skip_sponsorship:
+                step(chain.send(keys.account("sponsor_operator"), label="w2_sponsor_allowlist",
+                                phase="workflow", to=env.allowlist_paymaster,
+                                data=abi.call(abi.SIG_PM_SET_SPONSORED, ["address", "bool"],
+                                              [recipient_account, True]),
+                                gas=cfg.gas_limit("setup_call")))
+            builder = _op_builder(chain, cfg, env, keys, recipient_account, baseline_id,
+                                  deploy=not warm, execute=True, variation=variation)
+            def fund_for_calibration(o: UserOp) -> None:
+                fund(o, "calibration_prefund", "calibration", False,
+                     variation.eth_allowance_delta)
+
+            op = calibrated("w3_bundle", builder,
+                            fund_for_calibration if baseline_id == "B1" else None)
+            if baseline_id == "B1":
+                eth_allowance = fund(op, "w2_eth_allowance", "workflow", True,
+                                     variation.eth_allowance_delta)
+            out = bundler.send_user_operation(op, label="w3_bundle")
+            userops.append({"label": "w3_bundle", "userop_hash": out.userop_hash,
+                            "packed": op.as_json()})
+            if out.accepted:
+                labels[out.bundle.hash] = "w3_bundle"
             else:
-                sim = outcome.log[-1]
+                sim = out.log[-1]
                 failure = WorkflowFailure("w3_bundle", {
                     "rejection_category": sim["rejection_category"],
                     "reason": sim["raw_error"]["decoded"].get("reason")})
 
         workflow_end = chain.block_number()
 
-        # --- state reads for accounting (role-free, keyed by address) --------
+        # --- state reads (role-free, keyed by address) ------------------------
         tracked = sorted(set(addrs.values()) - {addrs["established_wallet"]}
-                         | {recipient_account, env.entrypoint, env.factory,
-                            env.token, env.paymaster, env.account_implementation})
-        blocks = sorted({setup_end, workflow_end})
+                         | {recipient_account, env.entrypoint, env.factory, env.token,
+                            env.allowlist_paymaster, env.signature_paymaster,
+                            env.account_implementation})
+        blocks = sorted({setup_end, warmup_end, workflow_end})
         state = {
             "eth_balance": {a: {str(b): str(chain.balance(a, b)) for b in blocks}
                             for a in tracked},
             "entrypoint_deposit": {
                 a: {str(b): str(ep_deposit(chain, env.entrypoint, a, b)) for b in blocks}
-                for a in (recipient_account, env.paymaster)},
+                for a in (recipient_account, env.allowlist_paymaster,
+                          env.signature_paymaster)},
             "erc20_balance": {
                 a: {str(b): str(_erc20_balance(chain, env.token, a, b)) for b in blocks}
                 for a in (addrs["asset_sender"], recipient_account, addrs["destination"])},
@@ -297,11 +391,9 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                                 chain.code(a, b)[2:])).hexdigest() for b in blocks}
                             for a in (recipient_account, env.account_implementation)},
         }
-        # Deposit before each Deposited log's block, so deposit *deltas* are
-        # regenerable from the dump without re-querying the chain.
         deposit_before_tx: Dict[str, Dict[str, str]] = {}
         for st in chain.sent:
-            if st.phase != "workflow":
+            if st.phase == "setup":
                 continue
             for log in st.receipt["logs"]:
                 d = abi.decode_log(log)
@@ -311,11 +403,20 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                         ep_deposit(chain, env.entrypoint, d["account"], blk))
         state["entrypoint_deposit_before_tx"] = deposit_before_tx
 
+        contracts = {
+            "EntryPoint": env.entrypoint,
+            "SimpleAccountFactory": env.factory,
+            "SimpleAccount_implementation": env.account_implementation,
+            "W1Token": env.token,
+            "ObservablePaymaster": env.allowlist_paymaster,
+            "SignatureVerifyingPaymaster": env.signature_paymaster,
+        }
         chain_dump = {
             "dump_version": DUMP_VERSION,
             "baseline_id": baseline_id,
-            "workload_id": "W1",
-            "seed_commitment_sha256": commit_to_value(f"w1-dump/{baseline_id}", seed),
+            "workload_id": workload_id,
+            "seed_commitment_sha256": commit_to_value(
+                f"w1-dump/{baseline_id}/{workload_id}", seed),
             "config": cfg.raw,
             "environment": {
                 "anvil_version": anvil.version,
@@ -326,13 +427,10 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                 "python_dependencies": _python_deps(),
                 "rpc_calls": anvil.rpc.calls,
             },
-            "contracts": {
-                "EntryPoint": env.entrypoint,
-                "SimpleAccountFactory": env.factory,
-                "SimpleAccount_implementation": env.account_implementation,
-                "W1Token": env.token,
-                "ObservablePaymaster": env.paymaster,
-            },
+            "contracts": contracts,
+            "paymaster_used": PAYMASTER_OF.get(baseline_id),
+            # Public on chain (immutable in SignatureVerifyingPaymaster).
+            "signature_paymaster_verifying_signer": addrs["sponsor_signer"],
             "artifacts": {name: {"deployed_bytecode_sha256": a.deployed_bytecode_sha256,
                                  "bytecode_sha256": hashlib.sha256(a.bytecode).hexdigest()}
                           for name, a in arts.items()},
@@ -343,9 +441,13 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                 "vendored_tree_digest": dependency_tree_digest(
                     root / "baselines/b3_privgas_v1/lib/account-abstraction/contracts"),
             },
-            "bundler": ({"bundler_id": BUNDLER_ID, "simulation_method": SIMULATION_METHOD}
-                        if bundler_obj else None),
-            "blocks": {"setup_end": setup_end, "workflow_end": workflow_end},
+            "bundler": ({"bundler_id": BUNDLER_ID, "simulation_method": SIMULATION_METHOD,
+                         "pre_verification_gas_method":
+                             cfg.raw["userop"]["pre_verification_gas_method"]}
+                        if aa else None),
+            "pvg_calibrations": calibrations,
+            "blocks": {"setup_end": setup_end, "warmup_end": warmup_end,
+                       "workflow_end": workflow_end},
             "transactions": [st.as_dict() for st in chain.sent],
             "userops": userops,
             "state": state,
@@ -355,15 +457,17 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
         "note": "SECRET. Role assignment for one W1 run; answers who is who. "
                 "Never an attacker input.",
         "baseline_id": baseline_id,
+        "workload_id": workload_id,
         "roles": {**addrs, "recipient_account": recipient_account},
-        "recipient_account_kind": "eoa" if baseline_id == "B0" else "simple_account_v0.9.0",
+        "recipient_account_kind": "eoa" if not aa else "simple_account_v0.9.0",
         "tx_labels": labels,
         "eth_allowance": str(eth_allowance),
-        "variation": variation.__dict__,
+        "variation": asdict(variation),
         "failure": None if failure is None else {"step": failure.step, **failure.detail},
     }
-    return RunResult(baseline_id=baseline_id, seed=seed, chain_dump=chain_dump,
-                     bundler_log=bundler_obj.log if bundler_obj else [],
+    return RunResult(baseline_id=baseline_id, workload_id=workload_id, seed=seed,
+                     chain_dump=chain_dump,
+                     bundler_log=bundler.log if bundler else [],
                      private=private, failure=failure)
 
 
@@ -372,7 +476,7 @@ def write_raw(result: RunResult, raw_dir: Path, private_dir: Path) -> Dict[str, 
     private_dir.mkdir(parents=True, exist_ok=True)
     out = {"chain_dump": raw_dir / "chain_dump.json",
            "private": private_dir / "w1_private_run.json"}
-    for key, path in out.items():
+    for path in out.values():
         if path.exists():
             raise FileExistsError(f"{path} exists; raw files are never overwritten")
     out["chain_dump"].write_text(json.dumps(result.chain_dump, indent=2, sort_keys=True)

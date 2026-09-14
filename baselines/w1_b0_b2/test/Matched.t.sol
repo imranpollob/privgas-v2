@@ -10,9 +10,7 @@ import {W1Base} from "./W1Base.sol";
 contract MatchedTest is W1Base {
     function setUp() public override {
         super.setUp();
-        vm.deal(sponsorOperator, PAYMASTER_DEPOSIT);
-        vm.prank(sponsorOperator);
-        paymaster.deposit{value: PAYMASTER_DEPOSIT}();
+        fundPaymasters();
     }
 
     function test_B1_and_B2_useTheSameAccountImplementationAndFactory() public {
@@ -48,6 +46,39 @@ contract MatchedTest is W1Base {
         assertEq(b1.accountGasLimits, b2.accountGasLimits, "same account gas limits");
         assertEq(b1.gasFees, b2.gasFees, "same fee policy");
         assertEq(b1.preVerificationGas, b2.preVerificationGas);
+    }
+
+    function test_B1_B2Allowlist_B2Signature_differOnlyInPaymasterAndData() public view {
+        PackedUserOperation memory b1 = buildUserOp(recipient, Sponsor.None);
+        PackedUserOperation memory allow = buildUserOp(recipient, Sponsor.Allowlist);
+        PackedUserOperation memory sig = buildUserOp(recipient, Sponsor.Signature);
+        PackedUserOperation[3] memory ops = [b1, allow, sig];
+        for (uint256 i = 1; i < 3; i++) {
+            assertEq(ops[i].sender, b1.sender);
+            assertEq(ops[i].nonce, b1.nonce);
+            assertEq(keccak256(ops[i].initCode), keccak256(b1.initCode));
+            assertEq(keccak256(ops[i].callData), keccak256(b1.callData));
+            assertEq(ops[i].accountGasLimits, b1.accountGasLimits);
+            assertEq(ops[i].gasFees, b1.gasFees);
+            assertEq(ops[i].preVerificationGas, b1.preVerificationGas);
+        }
+        assertTrue(keccak256(allow.paymasterAndData) != keccak256(sig.paymasterAndData));
+    }
+
+    function test_B2Signature_deploysTheSameAccountCodeAsB1() public {
+        PackedUserOperation memory b1 = buildUserOp(recipient, Sponsor.None);
+        uint256 snap = vm.snapshotState();
+        deliverAsset(b1.sender);
+        vm.deal(b1.sender, requiredPrefund(false));
+        submit(sign(b1, RECIPIENT_KEY));
+        bytes32 b1Code = b1.sender.codehash;
+        vm.revertToState(snap);
+
+        PackedUserOperation memory sig = buildUserOp(recipient, Sponsor.Signature);
+        deliverAsset(sig.sender);
+        sig = signPaymaster(sig, SPONSOR_SIGNER_KEY);
+        submit(sign(sig, RECIPIENT_KEY));
+        assertEq(sig.sender.codehash, b1Code);
     }
 
     function test_allBaselines_sameTokenAmountDestinationAndIntendedAction() public view {

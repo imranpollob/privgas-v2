@@ -248,7 +248,7 @@ Format for each entry:
   recorder against them, instead of treating the Prompt-3 synthetic fixtures
   as a description of the baselines. The fixtures stay fixtures
   (`data_origin: "synthetic_fixture"`); every assumption the real runs
-  contradicted is listed in `docs/w1-baselines.md` §7 and was corrected
+  contradicted is listed in `docs/w1-baselines.md` §14 and was corrected
   explicitly (schema 2.0.0 entry below), not silently.
 - **Why**: the fixtures encoded guesses about event structure that no chain
   had produced. Measurements must drive the schema, not the reverse.
@@ -337,7 +337,7 @@ Format for each entry:
   timestamps were rejected). Synthetic examples regenerated under 2.0.0 with
   their corrections annotated in `w1_fixtures.py`.
 - **Why**: each item was contradicted by real B0/B1/B2 behaviour
-  (`docs/w1-baselines.md` §7). No measured 1.0.0 data ever existed, so the bump
+  (`docs/w1-baselines.md` §14). No measured 1.0.0 data ever existed, so the bump
   strands nothing real; 1.0.0 is removed from `SUPPORTED_SCHEMA_VERSIONS`.
 - **Alternatives considered**: keeping `bundle_transaction_hash` and only
   editing its description — rejected: that changes a field's meaning under the
@@ -371,3 +371,96 @@ Format for each entry:
   synthetic example files under `data/public/baselines/*-example/` remain
   committable and were regenerated in 2.0.0 form (their content changed). The
   measured runs under `data/public/baselines/b{0,1,2}-w1/` are ignored.
+
+## 2026-09-14: Pre-Prompt-4 hardening — B2 split into B2-Signature (primary) and B2-Allowlist (auxiliary)
+
+- **Decision**: keep `ObservablePaymaster` unchanged as **B2-Allowlist**, an
+  auxiliary, intentionally public on-chain authorization baseline, and add
+  **B2-Signature** (`SignatureVerifyingPaymaster`) as the primary ordinary
+  Paymaster baseline. They get distinct `baseline_id`s and are never pooled.
+  B2-Allowlist must not be the sole public-Paymaster baseline for a privacy
+  claim.
+- **Why**: B2-Allowlist's `setSponsored(account, true)` publishes an explicit
+  sponsor→account relationship before the UserOperation, which may produce
+  stronger linkage than ordinary Paymasters that authorize off chain; using it
+  alone would bias any later B2-vs-B3/B4 comparison.
+- **How B2-Signature avoids designing cryptography**: the pinned
+  account-abstraction tree (b36a1ed, v0.9.0) contains no `VerifyingPaymaster`
+  sample. v0.9.0 does define a Paymaster-signature suffix
+  (`PAYMASTER_SIG_MAGIC`; `UserOperationLib.getPaymasterSignature` etc.) whose
+  bytes the EntryPoint excludes from `userOpHash`. The sponsor therefore signs
+  the EntryPoint's own EIP-712 `userOpHash` — the digest `SimpleAccount`
+  already verifies — and signed Paymaster data carries `validUntil/validAfter`
+  through upstream `_packValidationData`. What is bound, and how replay is
+  prevented (EntryPoint nonce), is documented and tested in
+  `docs/w1-baselines.md` §4. Human review of the binding is still required.
+- **Alternatives considered**: porting the v0.6/v0.7 upstream
+  `VerifyingPaymaster` (custom hash over selected fields + EIP-191 prefix) —
+  rejected: it is not in the pinned tree and would duplicate, with a
+  hand-picked field list, what the v0.9.0 `userOpHash` already binds.
+
+## 2026-09-14: preVerificationGas is calibrated per operation; beneficiary pre-funded
+
+- **Decision**: replace the fixed preVerificationGas (50,000) with
+  `break_even_calibration_v1` (`experiments/workloads/w1/pvg.py`): a dry run of
+  the exact encoded bundle inside a reverted `evm_snapshot` measures the gas
+  the EntryPoint does not charge, decomposed as 21,000 + EIP-2028 calldata gas
+  + EntryPoint unmeasured overhead, then solved for the final signed op.
+  Pre-fund the EntryPoint beneficiary in setup. Reconciliation now fails if the
+  bundler's net is worse than −100 gas × price.
+- **Why**: the old value left the bundler ~17,800 gas short per op. Measuring
+  it showed the shortfall was dominated by a 25,000-gas new-account charge on
+  the unfunded beneficiary; with that removed, 50,000 over-paid by ~7,000 gas.
+  Neither error is acceptable in a cost comparison. After calibration the
+  bundler net is 0 gas for B1 cold/warm and B2-Allowlist and +12 gas for
+  B2-Signature (deterministic re-signing rounding). The EntryPoint overhead O
+  was 14,985 gas for every measured op.
+- **Alternatives considered**: a fixed constant fitted to one run (rejected by
+  instruction and because it hides the new-account artefact); an estimate
+  from eth-infinitism bundler overhead constants (rejected: not verifiable
+  offline for v0.9.0 and not derived from our encoded bundle). Limitation:
+  snapshot dry runs are a devnet facility; a production bundler must estimate
+  and add margin.
+
+## 2026-09-14: W1-cold (primary) and W1-warm (ablation)
+
+- **Decision**: the existing fresh-account workflow is **W1-cold**, the primary
+  workload. **W1-warm** (implemented for B1) deploys the same SimpleAccount by
+  an earlier sender-funded warm-up UserOperation (initCode, empty callData);
+  warm-up cost is excluded from the measured action and reported separately;
+  its public rows stay in the record (they are part of the trace T). B0 is not
+  changed. B2 warm variants are optional and not implemented.
+- **Why**: separate first-use deployment overhead (measured by difference:
+  173,841 gas, with the nonce-first-write confound) from recurring execution.
+- **Consequence found while implementing**: sending ETH to an already-deployed
+  SimpleAccount cannot fit in 21,000 gas (payable `receive()` via the ERC-1967
+  proxy); W1-warm funding uses a 60,000-gas limit (25,868 used). The runner now
+  aborts if any non-measured workflow step reverts, instead of recording it.
+
+## 2026-09-14: Schema 3.0.0 — split baseline and workload identifiers
+
+- **Decision**: `baseline_id` `"B2"` → `"B2-Allowlist"`, `"B2-Signature"`;
+  `workload_id` `"W1"` → `"W1-cold"`, `"W1-warm"`; new rule rejecting
+  `W1-warm` for non-ERC-4337 baselines. MAJOR bump. The schema-2.0.0 measured
+  runs were **moved** (not deleted) to `data/private/archive/schema-2.0.0/`;
+  synthetic examples were regenerated (`b2-w1-example` replaced by
+  `b2-allowlist-w1-example` and a new `b2-signature-w1-example`).
+- **Why**: an existing value's meaning split in two; keeping `"B2"` or `"W1"`
+  valid would allow exactly the pooling the split exists to prevent.
+
+## 2026-09-14: No external bundler yet; the in-repo bundler is experimental
+
+- **Decision**: do not integrate an external bundler now. Document everywhere
+  results are produced that `privgas-minibundler-v1` is an instrumented
+  experimental bundler that does not establish ERC-7562 or production
+  compatibility. A real, independent compatible bundler is required before any
+  D2 liveness claim, any production-compatibility claim, and to replicate D1
+  results. Staking requirements are not inferred without testing.
+
+## 2026-09-14: B3 reproduction doc corrected
+
+- **Decision**: `docs/b3-reproduction.md` no longer says the EIP-170 regression
+  test "fails by design". It passes when it confirms the frozen PoseidonT3
+  runtime bytecode exceeds EIP-170; the separate ordinary-key broadcast
+  experiment records the actual deployment failure. Documentation only; B3
+  untouched.

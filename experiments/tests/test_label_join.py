@@ -27,7 +27,7 @@ from experiments.recorder import paths as paths_mod
 from experiments.recorder.examples.generate import RUNS, generate_one
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_ID, RUN_ID = RUNS["B2"]
+EXPERIMENT_ID, RUN_ID = RUNS["B2-Allowlist"]
 
 
 class LabelJoinTestCase(unittest.TestCase):
@@ -55,7 +55,7 @@ class LabelJoinTestCase(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
         shutil.copy(REPO_ROOT / "scripts" / "env-report.sh",
                     self.root / "scripts" / "env-report.sh")
-        generate_one("B2", self.root, env_report=self._env_report)
+        generate_one("B2-Allowlist", self.root, env_report=self._env_report)
         self.rp = paths_mod.run_paths(EXPERIMENT_ID, RUN_ID, self.root)
 
     def tearDown(self):

@@ -12,13 +12,14 @@ map that onto the schema and which fields that baseline is structurally
 forbidden from populating.
 
 Available: B0 (sender-funded EOA), B1 (sender-funded smart account),
-B2 (ordinary observable Paymaster). B3 can be added against the same base
+B2-Allowlist (auxiliary public-allowlist Paymaster) and B2-Signature
+(signature-verifying Paymaster). B3 can be added against the same base
 class without a schema change; B4/B5 are out of scope for this task.
 """
 
 from .b0_sender_eoa import B0Adapter  # noqa: F401
 from .b1_sender_aa import B1Adapter  # noqa: F401
-from .b2_public_paymaster import B2Adapter  # noqa: F401
+from .b2_public_paymaster import B2AllowlistAdapter, B2SignatureAdapter  # noqa: F401
 from .base import (  # noqa: F401
     BaselineAdapter,
     BundlerObservation,
@@ -31,13 +32,14 @@ from .base import (  # noqa: F401
 __all__ = [
     "BaselineAdapter", "Observation", "UserOpObservation",
     "BundlerObservation", "GroundTruth", "RelationLabel",
-    "B0Adapter", "B1Adapter", "B2Adapter", "ADAPTERS", "for_baseline",
+    "B0Adapter", "B1Adapter", "B2AllowlistAdapter", "B2SignatureAdapter", "ADAPTERS", "for_baseline",
 ]
 
 ADAPTERS = {
     "B0": B0Adapter,
     "B1": B1Adapter,
-    "B2": B2Adapter,
+    "B2-Allowlist": B2AllowlistAdapter,
+    "B2-Signature": B2SignatureAdapter,
 }
 
 

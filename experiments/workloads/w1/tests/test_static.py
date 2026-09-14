@@ -40,9 +40,13 @@ class TestMatchedConfig(unittest.TestCase):
         c = self.cfg
         self.assertEqual(c.b0_eth_allowance, c.gas_limit("b0_action") * c.max_fee)
         self.assertEqual(
-            c.b1_eth_allowance,
-            (c.verification_gas_limit + c.call_gas_limit + c.pre_verification_gas)
-            * c.max_fee)
+            c.required_prefund(False, 42_000),
+            (c.verification_gas_limit + c.call_gas_limit + 42_000) * c.max_fee)
+
+    def test_pre_verification_gas_is_calibrated_not_fixed(self):
+        self.assertNotIn("pre_verification_gas", self.cfg.raw["userop"])
+        self.assertEqual(self.cfg.raw["userop"]["pre_verification_gas_method"],
+                         "break_even_calibration_v1")
 
     def test_b2_carries_no_postop_limit(self):
         self.assertEqual(self.cfg.paymaster_post_op_gas_limit, 0)
@@ -60,12 +64,20 @@ class TestKeys(unittest.TestCase):
         self.assertRegex(h, r"^actor_[0-9a-f]{10}$")
 
 
+class TestCalldataGas(unittest.TestCase):
+    def test_eip2028_costs(self):
+        from experiments.workloads.w1.pvg import calldata_gas, calldata_tokens
+        self.assertEqual(calldata_gas(bytes([0, 0, 1, 255])), 4 + 4 + 16 + 16)
+        self.assertEqual(calldata_tokens(bytes([0, 1])), 1 + 4)
+
+
 class TestRejectionClassification(unittest.TestCase):
     def test_entrypoint_reason_codes(self):
         c = bundler_mod.classify_rejection
         self.assertEqual(c("AA21 didn't pay prefund"), "insufficient_prefund")
         self.assertEqual(c("AA31 paymaster deposit too low"), "insufficient_prefund")
         self.assertEqual(c("AA33 reverted"), "paymaster_validation_revert")
+        self.assertEqual(c("AA34 signature error"), "paymaster_validation_revert")
         self.assertEqual(c("AA24 signature error"), "aa_validation_revert")
         self.assertEqual(c("AA25 invalid account nonce"), "nonce_conflict")
         self.assertEqual(c(None), "other")

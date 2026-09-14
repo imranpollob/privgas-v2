@@ -21,7 +21,7 @@ from experiments.recorder.privatekeys import FORBIDDEN_PRIVATE_KEYS
 from experiments.recorder.provenance import environment_report
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_ID, RUN_ID = RUNS["B2"]
+EXPERIMENT_ID, RUN_ID = RUNS["B2-Allowlist"]
 
 
 class TestLeakageSelfCheck(unittest.TestCase):
@@ -39,7 +39,7 @@ class TestLeakageSelfCheck(unittest.TestCase):
         shutil.copy(REPO_ROOT / "scripts" / "env-report.sh",
                     self.root / "scripts" / "env-report.sh")
         subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
-        generate_one("B2", self.root, env_report=self._env_report)
+        generate_one("B2-Allowlist", self.root, env_report=self._env_report)
         self.rp = paths_mod.run_paths(EXPERIMENT_ID, RUN_ID, self.root)
 
     def tearDown(self):

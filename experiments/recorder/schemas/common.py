@@ -207,7 +207,7 @@ def _check_seq(value, *, field, stream):
 
 def _check_workload_id(value, *, field, stream):
     check_enum(value, field=field, stream=stream,
-               allowed=("W1", "W2", "W3", "W4"))
+               allowed=baselines.WORKLOAD_IDS)
 
 
 def _check_data_origin(value, *, field, stream):
@@ -236,11 +236,15 @@ def envelope_fields(*, scenario_nullable: bool) -> Tuple[FieldSpec, ...]:
         FieldSpec("seq", _check_seq, CLASS_PUBLIC, "A0",
                   "0-based position of this row within its stream for this run."),
         FieldSpec("baseline_id", _check_baseline_id, CLASS_PUBLIC, "A0",
-                  "Which baseline produced the row (B0..B6). The experimental "
+                  "Which baseline produced the row (B0, B1, B2-Allowlist, "
+                  "B2-Signature, B3..B6). The experimental "
                   "condition, known to the attacker by construction."),
         FieldSpec("workload_id", _check_workload_id, CLASS_PUBLIC, "A0",
-                  "Canonical workload (docs/research-plan.md Sec. 4): W1 ERC-20, "
-                  "W2 ERC-721, W3 native ETH, W4 repeated actions. Like "
+                  "Canonical workload (docs/research-plan.md Sec. 4): W1-cold "
+                  "(primary ERC-20 W1; a smart account is deployed by the "
+                  "measured operation), W1-warm (AA-only ablation; account "
+                  "deployed beforehand), W2 ERC-721, W3 native ETH, W4 "
+                  "repeated actions. Like "
                   "baseline_id this is an experimental condition the attacker "
                   "knows by construction, not a hidden label."),
         FieldSpec("scenario_id", _check_scenario_id, CLASS_PUBLIC, "A0",
@@ -292,6 +296,19 @@ def rule_synthetic_run_id_prefix(record: Mapping[str, Any], stream: str) -> None
         raise RecordValidationError(
             "run_id is prefixed 'synthetic-' but data_origin claims 'measured'",
             stream=stream, field="data_origin", code="origin_mismatch")
+
+
+def rule_workload_matches_baseline(record: Mapping[str, Any], stream: str) -> None:
+    """W1-warm pre-deploys a smart account, so it exists only for AA baselines."""
+    workload = record.get("workload_id")
+    if workload in baselines.ERC4337_ONLY_WORKLOADS and baselines.is_known(
+            record.get("baseline_id")):
+        if not baselines.get(record["baseline_id"]).uses_erc4337:
+            raise RecordValidationError(
+                f"workload {workload!r} pre-deploys an ERC-4337 account; "
+                f"baseline {record['baseline_id']} has no account to deploy",
+                stream=stream, field="workload_id",
+                code="baseline_capability_violation")
 
 
 def rule_record_id_matches(record: Mapping[str, Any], stream: str) -> None:

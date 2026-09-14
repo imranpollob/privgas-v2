@@ -10,7 +10,7 @@ observations").
 This table describes the *baselines*; it does not describe the mechanism a
 baseline uses and makes no claim about any baseline's privacy properties.
 
-Status: B0, B1 and B2 are implemented in ``baselines/w1_b0_b2`` (runner:
+Status: B0, B1, B2-Allowlist and B2-Signature are implemented in ``baselines/w1_b0_b2`` (runner:
 ``experiments/workloads/w1``) and their rows were confirmed against real runs
 on 2026-09-14 -- the capability flags held; see docs/w1-baselines.md. B3 is the
 frozen specimen. B4-B6 rows still encode docs/research-plan.md Sec. 5, not an
@@ -60,10 +60,22 @@ _TABLE: Dict[str, BaselineCapabilities] = {
         "prefund, no Paymaster (baselines/w1_b0_b2).",
         implemented_in_repo=True,
     ),
-    "B2": BaselineCapabilities(
-        "B2", True, True, True, False, False,
-        "Ordinary, fully observable allowlist Paymaster sponsoring the same "
-        "operation as B1 with no privacy mechanism (baselines/w1_b0_b2).",
+    # Schema 3.0.0: the former single "B2" is split. The two ordinary
+    # Paymaster designs leak different public relationships and must never
+    # share a baseline_id.
+    "B2-Allowlist": BaselineCapabilities(
+        "B2-Allowlist", True, True, True, False, False,
+        "AUXILIARY ordinary Paymaster with a public on-chain allowlist: a "
+        "setSponsored(account,true) transaction links sponsor and account "
+        "before the operation. Same operation as B1 (baselines/w1_b0_b2).",
+        implemented_in_repo=True,
+    ),
+    "B2-Signature": BaselineCapabilities(
+        "B2-Signature", True, True, True, False, False,
+        "Ordinary signature-verifying Paymaster: sponsors an operation "
+        "carrying the sponsor's ECDSA signature over the EntryPoint v0.9.0 "
+        "userOpHash; no on-chain per-account authorization. Same operation as "
+        "B1 (baselines/w1_b0_b2).",
         implemented_in_repo=True,
     ),
     "B3": BaselineCapabilities(
@@ -94,6 +106,12 @@ _TABLE: Dict[str, BaselineCapabilities] = {
 }
 
 BASELINE_IDS = tuple(sorted(_TABLE))
+
+#: Workloads and which baselines may run them. W1-warm is an AA-only
+#: ablation (the smart account is deployed before the measured action);
+#: a plain EOA has nothing to pre-deploy.
+WORKLOAD_IDS = ("W1-cold", "W1-warm", "W2", "W3", "W4")
+ERC4337_ONLY_WORKLOADS = ("W1-warm",)
 
 
 def get(baseline_id: str) -> BaselineCapabilities:

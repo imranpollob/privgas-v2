@@ -1,4 +1,4 @@
-"""Generate the B0/B1/B2 synthetic example runs.
+"""Generate the B0/B1/B2-Allowlist/B2-Signature synthetic example runs (W1-cold).
 
     python3 -m experiments.recorder.examples.generate [--root DIR] [--quiet]
 
@@ -30,7 +30,10 @@ from . import w1_fixtures
 RUNS = {
     "B0": ("baselines/b0-w1-example", "synthetic-20260301T120000Z-b0"),
     "B1": ("baselines/b1-w1-example", "synthetic-20260301T120000Z-b1"),
-    "B2": ("baselines/b2-w1-example", "synthetic-20260301T120000Z-b2"),
+    "B2-Allowlist": ("baselines/b2-allowlist-w1-example",
+                     "synthetic-20260301T120000Z-b2allow"),
+    "B2-Signature": ("baselines/b2-signature-w1-example",
+                     "synthetic-20260301T120000Z-b2sig"),
 }
 
 FIXED_SEED = 424242
@@ -60,7 +63,7 @@ COMPONENTS: Dict[str, Dict[str, object]] = {
                   "decimals": 18},
         "destination": w1_fixtures.DESTINATION,
     },
-    "B2": {
+    "B2-Allowlist": {
         "entrypoint": {"address": w1_fixtures.ENTRYPOINT,
                        "version": w1_fixtures.ENTRYPOINT_VERSION},
         "account_implementation": {
@@ -68,8 +71,23 @@ COMPONENTS: Dict[str, Dict[str, object]] = {
             "factory": w1_fixtures.FACTORY,
             "note": "must be byte-identical to B1's account for the "
                     "comparison to isolate the gas mechanism"},
-        "paymaster": {"kind": "observable_paymaster",
+        "paymaster": {"kind": "observable_paymaster_allowlist",
                       "address": w1_fixtures.PAYMASTER, "version": "fixture",
+                      "privacy_mechanism": None},
+        "asset": {"kind": "erc20", "address": w1_fixtures.TOKEN,
+                  "decimals": 18},
+        "destination": w1_fixtures.DESTINATION,
+    },
+    "B2-Signature": {
+        "entrypoint": {"address": w1_fixtures.ENTRYPOINT,
+                       "version": w1_fixtures.ENTRYPOINT_VERSION},
+        "account_implementation": {
+            "kind": "erc4337_smart_account", "version": "fixture",
+            "factory": w1_fixtures.FACTORY,
+            "note": "must be byte-identical to B1's account for the "
+                    "comparison to isolate the gas mechanism"},
+        "paymaster": {"kind": "signature_verifying_paymaster",
+                      "address": w1_fixtures.SIG_PAYMASTER, "version": "fixture",
                       "privacy_mechanism": None},
         "asset": {"kind": "erc20", "address": w1_fixtures.TOKEN,
                   "decimals": 18},
@@ -104,7 +122,7 @@ def generate_one(baseline_id: str, root: Optional[Path] = None,
 
     recorder = ExperimentRecorder(
         experiment_id=experiment_id, run_id=run_id, baseline_id=baseline_id,
-        workload_id="W1", seed=FIXED_SEED, chain_id=w1_fixtures.CHAIN_ID,
+        workload_id="W1-cold", seed=FIXED_SEED, chain_id=w1_fixtures.CHAIN_ID,
         components=COMPONENTS[baseline_id], data_origin="synthetic_fixture",
         paths=rp, revision=software_revision(root),
         env_report=env_report or environment_report(root),

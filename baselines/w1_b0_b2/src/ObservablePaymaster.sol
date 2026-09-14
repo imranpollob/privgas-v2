@@ -6,8 +6,14 @@ import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {SIG_VALIDATION_SUCCESS} from "account-abstraction/core/Helpers.sol";
 
-/// @title ObservablePaymaster (baseline B2)
-/// @notice An ordinary, non-private Paymaster used only as the B2 baseline.
+/// @title ObservablePaymaster (auxiliary baseline B2-Allowlist)
+/// @notice An ordinary, non-private Paymaster with an intentionally public
+/// on-chain authorization. Its `setSponsored(account, true)` transaction
+/// creates an explicit sponsor->account relationship on chain BEFORE the
+/// UserOperation, which may produce stronger linkage than other ordinary
+/// Paymaster designs. It is therefore an auxiliary baseline and must not be
+/// the sole public-Paymaster baseline for privacy claims; see
+/// SignatureVerifyingPaymaster (B2-Signature).
 ///
 /// AUTHORIZATION RULE (the whole rule, nothing else):
 ///

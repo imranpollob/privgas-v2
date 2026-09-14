@@ -57,6 +57,7 @@ from .common import (
     require_null_fields,
     rule_record_id_matches,
     rule_synthetic_run_id_prefix,
+    rule_workload_matches_baseline,
 )
 
 STREAM = "public_events"
@@ -442,6 +443,7 @@ SCHEMA = StreamSchema(
     ),
     cross_field_rules=(
         rule_synthetic_run_id_prefix,
+        rule_workload_matches_baseline,
         rule_record_id_matches,
         _rule_baseline_capabilities,
         _rule_inclusion_consistency,

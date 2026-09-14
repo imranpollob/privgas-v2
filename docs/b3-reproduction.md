@@ -191,10 +191,18 @@ real broadcast attempt.
   (linking to a pre-deployed canonical `PoseidonT3`, or otherwise) is a
   separate, explicitly labeled change if and when the project needs
   `CreditPool` actually deployed for an experiment.
-- A regression test encoding this fact (independent of any live network)
-  lives at `test/b3_ordinary_deploy/test/OrdinaryDeploy.t.sol` and
-  currently **fails by design** — it documents the unresolved defect
-  rather than working around it.
+- A regression test encoding the underlying fact (independent of any live
+  network) lives at `test/b3_ordinary_deploy/test/OrdinaryDeploy.t.sol`
+  (`test_poseidonT3_confirmedExceedsEip170SizeLimit`). It **passes** when it
+  confirms that the frozen PoseidonT3 runtime bytecode exceeds the EIP-170
+  24,576-byte limit; it would turn red only if the pinned commit or its
+  dependencies changed. (An earlier version asserted the opposite and failed
+  by design; it was inverted on 2026-09-14 — see `docs/decision-log.md`.)
+- The test does **not** record the deployment failure itself. The separate
+  ordinary-key broadcast experiment (`scripts/run_b3_ordinary_deploy.sh` /
+  `test/b3_ordinary_deploy/script/OrdinaryDeploy.s.sol`) is what records the
+  actual failed deployment, in `results/b3/ordinary-deploy-result.json` and
+  `results/b3/ordinary-deploy.log`.
 
 ## Acceptance criteria check (against `docs/ai-coder-prompts.md` Prompt 1)
 

@@ -1,4 +1,11 @@
-"""Canonical workload W1 as synthetic observations for B0, B1 and B2.
+"""Canonical workload W1-cold as synthetic observations for B0, B1,
+B2-Allowlist and B2-Signature.
+
+Schema 3.0.0 revision: "B2" is split into B2-Allowlist (public on-chain
+allowlist row before the operation) and B2-Signature (no allowlist row; the
+sponsor's authorization travels inside paymasterAndData), and the workload is
+W1-cold. B2-Signature's rejected attempt carries a wrong sponsor signature
+(EntryPoint AA34), the rejection the real in-repo bundler produces for it.
 
 W1 (docs/research-plan.md Sec. 4): a sender transfers an ERC-20 token to a fresh
 stealth-controlled account; that account then transfers the token to a fixed
@@ -28,7 +35,7 @@ Schema 2.0.0 revision (2026-09-14). These fixtures were first written before
 any real baseline existed. The first real B0/B1/B2 runs
 (experiments/workloads/w1) showed several of their assumptions were wrong;
 the fixtures now follow the real event structure, and each correction is
-listed in docs/w1-baselines.md Sec. 7:
+listed in docs/w1-baselines.md Sec. 14:
 
 1. mined UserOperation rows are observer tier A0, not A1;
 2. the A2 bundle field is the pre-inclusion association
@@ -68,6 +75,7 @@ TOKEN = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
 DESTINATION = "0xdddddddddddddddddddddddddddddddddddddddd"
 FACTORY = "0xfaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 PAYMASTER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+SIG_PAYMASTER = "0xb5160000000000000000000000000000000000b2"
 BENEFICIARY = "0xbeee000000000000000000000000000000000001"
 BUNDLER_EOA = "0xb0b0000000000000000000000000000000000001"
 SPONSOR_OPERATOR = "0x5905000000000000000000000000000000000001"
@@ -122,11 +130,12 @@ class _Scenario:
 def _scenarios(baseline_id: str) -> List[_Scenario]:
     # Under B2 both scenarios belong to one actor holding two stealth
     # accounts -- see the module docstring.
-    actor_b = "actor_7c1e" if baseline_id == "B2" else "actor_9d42"
-    established_b = ("wallet_7c1e_main" if baseline_id == "B2"
+    sponsored = baseline_id.startswith("B2")
+    actor_b = "actor_7c1e" if sponsored else "actor_9d42"
+    established_b = ("wallet_7c1e_main" if sponsored
                      else "wallet_9d42_main")
-    funder_b = "funder_sponsor" if baseline_id == "B2" else "funder_9d42"
-    funder_a = "funder_sponsor" if baseline_id == "B2" else "funder_7c1e"
+    funder_b = "funder_sponsor" if sponsored else "funder_9d42"
+    funder_a = "funder_sponsor" if sponsored else "funder_7c1e"
     return [
         _Scenario("scn-a", 0, actor="A", stealth_addr=STEALTH_A,
                   sender_addr=ASSET_SENDER_A, established_addr=ESTABLISHED_A,
@@ -165,10 +174,10 @@ def build(baseline_id: str) -> Tuple[List[Observation], List[BundlerObservation]
         return _build_b0()
     if baseline_id == "B1":
         return _build_b1()
-    if baseline_id == "B2":
-        return _build_b2()
+    if baseline_id in ("B2-Allowlist", "B2-Signature"):
+        return _build_b2(baseline_id)
     raise ValueError(
-        f"no W1 fixture for {baseline_id!r}; fixtures exist for B0, B1 and B2 "
+        f"no W1 fixture for {baseline_id!r}; fixtures exist for B0, B1, B2-Allowlist and B2-Signature "
         "only (Prompt 3 Sec. 18)")
 
 
@@ -268,7 +277,8 @@ def _build_b0():
 
 
 def _aa_action(scn: _Scenario, *, with_paymaster: bool, block: int,
-               minute: int, uo: UserOpObservation) -> List[Observation]:
+               minute: int, uo: UserOpObservation,
+               paymaster: str = PAYMASTER) -> List[Observation]:
     """The bundle transaction and its W1-relevant logs, in real log order.
 
     Mirrors experiments/workloads/w1/recording.py: bundle tx row, then
@@ -281,7 +291,7 @@ def _aa_action(scn: _Scenario, *, with_paymaster: bool, block: int,
         block_hash=_h("blk", block), block_timestamp_utc=_ts(minute),
         transaction_index=0, transaction_hash=tx,
     )
-    pm = PAYMASTER if with_paymaster else None
+    pm = paymaster if with_paymaster else None
     rows = [
         Observation(
             event_type="eoa_transaction", outcome="success", asset_type="none",
@@ -361,11 +371,13 @@ def _build_b1():
     return obs, bundler, gts
 
 
-def _build_b2():
+def _build_b2(baseline_id: str):
+    allowlist = baseline_id == "B2-Allowlist"
+    pm_addr = PAYMASTER if allowlist else SIG_PAYMASTER
     obs: List[Observation] = []
     bundler: List[BundlerObservation] = []
     gts: List[GroundTruth] = []
-    for scn in _scenarios("B2"):
+    for scn in _scenarios(baseline_id):
         base_block = 300 + scn.idx * 10
         # B2 receives the asset but no ETH: the Paymaster pays for gas.
         obs.append(_asset_arrival(scn, base_block, 10 + scn.idx, 1))
@@ -373,10 +385,10 @@ def _build_b2():
 
         attempt = 1
         if scn.idx == 1:
-            # Submitted before the account was allowlisted: the bundler's
-            # simulation hits the Paymaster's revert (AA33). Recorded in the
-            # A2 stream only -- no public observer saw a privately submitted
-            # operation.
+            # B2-Allowlist: submitted before the account was allowlisted
+            # (AA33). B2-Signature: carried a wrong sponsor signature (AA34).
+            # Recorded in the A2 stream only -- no public observer saw a
+            # privately submitted operation.
             bundler.append(BundlerObservation(
                 bundler_id="bundler-alpha", userop_hash=uo.userop_hash,
                 sender=scn.stealth_addr, nonce=0, scenario_id=scn.tag,
@@ -390,22 +402,24 @@ def _build_b2():
             attempt = 2
 
         # The public allowlist entry: an ordinary allowlist Paymaster names
-        # the sponsored account on chain before the operation.
-        obs.append(Observation(
-            event_type="paymaster_event", outcome="success", asset_type="none",
-            scenario_id=scn.tag, observer_tier="A0",
-            block_number=base_block + 1, block_hash=_h("blk", base_block + 1),
-            block_timestamp_utc=_ts(16 + scn.idx), transaction_index=0,
-            log_index=0, transaction_hash=_h(f"tx{scn.tag}", 2),
-            sender=SPONSOR_OPERATOR, target=PAYMASTER, paymaster=PAYMASTER,
-            subject_account=scn.stealth_addr,
-            method_selector=SELECTOR_SET_SPONSORED,
-            calldata_class="paymaster_policy", nonce=scn.idx + 1,
-            actual_gas_used=47_900, actual_gas_cost=95_800_000_000_000,
-            effective_gas_price=2_000_000_000, success=True,
-        ))
+        # the sponsored account on chain before the operation. B2-Signature
+        # has no such transaction.
+        if allowlist:
+            obs.append(Observation(
+                event_type="paymaster_event", outcome="success", asset_type="none",
+                scenario_id=scn.tag, observer_tier="A0",
+                block_number=base_block + 1, block_hash=_h("blk", base_block + 1),
+                block_timestamp_utc=_ts(16 + scn.idx), transaction_index=0,
+                log_index=0, transaction_hash=_h(f"tx{scn.tag}", 2),
+                sender=SPONSOR_OPERATOR, target=PAYMASTER, paymaster=PAYMASTER,
+                subject_account=scn.stealth_addr,
+                method_selector=SELECTOR_SET_SPONSORED,
+                calldata_class="paymaster_policy", nonce=scn.idx + 1,
+                actual_gas_used=47_900, actual_gas_cost=95_800_000_000_000,
+                effective_gas_price=2_000_000_000, success=True,
+            ))
         obs.extend(_aa_action(scn, with_paymaster=True, block=base_block + 2,
-                              minute=20 + scn.idx, uo=uo))
+                              minute=20 + scn.idx, uo=uo, paymaster=pm_addr))
         bundler.append(BundlerObservation(
             bundler_id="bundler-alpha", userop_hash=uo.userop_hash,
             sender=scn.stealth_addr, nonce=0, scenario_id=scn.tag,
@@ -419,10 +433,10 @@ def _build_b2():
             rpc_endpoint_id="local-anvil",
         ))
         gts.append(_ground_truth(
-            scn, "B2", action_ref=uo.userop_hash,
+            scn, baseline_id, action_ref=uo.userop_hash,
             anchors={
                 "stealth_account_address": scn.stealth_addr,
-                "funding_address": PAYMASTER,
+                "funding_address": pm_addr,
                 "asset_sender_address": scn.sender_addr,
                 "established_wallet_address": scn.established_addr,
                 "transaction_hash": _h(f"tx{scn.tag}", 4),

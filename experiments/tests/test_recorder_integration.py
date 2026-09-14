@@ -84,7 +84,7 @@ class TestB0Integration(SandboxTestCase):
         experiment_id, _ = RUNS["B0"]
         rec = ExperimentRecorder(
             experiment_id=experiment_id, run_id=new_run_id(synthetic=True),
-            baseline_id="B0", workload_id="W1", seed=1, chain_id=31337,
+            baseline_id="B0", workload_id="W1-cold", seed=1, chain_id=31337,
             components={}, data_origin="synthetic_fixture",
             revision=software_revision(self.root),
             paths=paths_mod.run_paths(experiment_id, new_run_id(
@@ -140,7 +140,7 @@ class TestB2Integration(SandboxTestCase):
     def test_b2_matches_b1_application_semantics(self):
         """Same account code, target, selector, asset and amount as B1."""
         _, rp1 = self.generate("B1")
-        _, rp2 = self.generate("B2")
+        _, rp2 = self.generate("B2-Allowlist")
 
         def action(rp):
             rows = self.read_jsonl(rp.public_events_path)
@@ -172,7 +172,7 @@ class TestB2Integration(SandboxTestCase):
         self.assertEqual(m1["chain_id"], m2["chain_id"])
 
     def test_b2_paymaster_information_is_public(self):
-        _, rp = self.generate("B2")
+        _, rp = self.generate("B2-Allowlist")
         rows = self.read_jsonl(rp.public_events_path)
         ops = [r for r in rows if r["event_type"] == "user_operation_event"]
         self.assertTrue(ops)
@@ -183,7 +183,7 @@ class TestB2Integration(SandboxTestCase):
         self.assertIsNotNone(manifest["components"]["paymaster"]["address"])
 
     def test_b2_bundler_information_stays_separate_from_public(self):
-        _, rp = self.generate("B2")
+        _, rp = self.generate("B2-Allowlist")
         public_text = rp.public_events_path.read_text()
         for field in ("receive_timestamp_utc", "simulation_result",
                       "rejection_category", "replacement_lineage",
@@ -193,7 +193,7 @@ class TestB2Integration(SandboxTestCase):
                              "A0/A1 stream")
 
     def test_b2_records_a_rejected_operation_rather_than_dropping_it(self):
-        _, rp = self.generate("B2")
+        _, rp = self.generate("B2-Allowlist")
         bundler_rows = self.read_jsonl(rp.bundler_private_path)
         rejected = [r for r in bundler_rows
                     if r["simulation_result"] == "rejected"]
@@ -212,12 +212,26 @@ class TestB2Integration(SandboxTestCase):
         """Schema 2.0.0 correction: an operation submitted to a private bundler
         and never included was seen by no A0/A1 observer, so it has no public
         row (1.0.0 fixtures recorded a public 'not_included' row for it)."""
-        _, rp = self.generate("B2")
+        _, rp = self.generate("B2-Allowlist")
         public = self.read_jsonl(rp.public_events_path)
         self.assertEqual([r for r in public if r["outcome"] == "not_included"], [])
 
+    def test_b2_variants_are_distinct_baselines(self):
+        _, rpa = self.generate("B2-Allowlist")
+        _, rps = self.generate("B2-Signature")
+        allow = self.read_jsonl(rpa.public_events_path)
+        sig = self.read_jsonl(rps.public_events_path)
+        self.assertEqual({r["baseline_id"] for r in allow}, {"B2-Allowlist"})
+        self.assertEqual({r["baseline_id"] for r in sig}, {"B2-Signature"})
+        self.assertTrue([r for r in allow if r["calldata_class"] == "paymaster_policy"])
+        self.assertEqual([r for r in sig if r["calldata_class"] == "paymaster_policy"], [],
+                         "B2-Signature needs no on-chain allowlisting transaction")
+        self.assertNotEqual(
+            {r["paymaster"] for r in allow if r["paymaster"]},
+            {r["paymaster"] for r in sig if r["paymaster"]})
+
     def test_b2_mined_bundle_hash_is_public(self):
-        _, rp = self.generate("B2")
+        _, rp = self.generate("B2-Allowlist")
         public_hashes = {r["transaction_hash"]
                          for r in self.read_jsonl(rp.public_events_path)}
         for row in self.read_jsonl(rp.bundler_private_path):
@@ -246,7 +260,7 @@ class TestRecorderProperties(SandboxTestCase):
         run_id = new_run_id(synthetic=True, suffix="env")
         rec = ExperimentRecorder(
             experiment_id=experiment_id, run_id=run_id, baseline_id="B1",
-            workload_id="W1", seed=1, chain_id=31337, components={},
+            workload_id="W1-cold", seed=1, chain_id=31337, components={},
             data_origin="synthetic_fixture",
             revision=software_revision(self.root),
             paths=paths_mod.run_paths(experiment_id, run_id, self.root))
@@ -263,7 +277,7 @@ class TestRecorderProperties(SandboxTestCase):
         self.assertEqual(len(rev["worktree_id"]), 64)
 
     def test_every_row_carries_experiment_id_and_software_revision(self):
-        for baseline_id in ("B0", "B1", "B2"):
+        for baseline_id in ("B0", "B1", "B2-Allowlist", "B2-Signature"):
             with self.subTest(baseline=baseline_id):
                 _, rp = self.generate(baseline_id)
                 paths = [rp.public_events_path, rp.ground_truth_path]
@@ -278,7 +292,7 @@ class TestRecorderProperties(SandboxTestCase):
                                          "synthetic_fixture")
 
     def test_ground_truth_lands_only_under_data_private(self):
-        for baseline_id in ("B0", "B1", "B2"):
+        for baseline_id in ("B0", "B1", "B2-Allowlist", "B2-Signature"):
             with self.subTest(baseline=baseline_id):
                 _, rp = self.generate(baseline_id)
                 self.assertIn("data/private",

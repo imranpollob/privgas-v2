@@ -120,9 +120,9 @@ class TestMalformedValues(RejectionTestCase):
                             code="malformed_hash")
 
     def test_h_unsupported_schema_version(self):
-        # "1.0.0" is the superseded pre-baseline version: its rows are not
-        # readable by 2.0.0 code (docs/experiment-schema.md Sec. 9).
-        for bad in ("0.9", "1.0", "1.0.0", "3.0.0", "", None, 1.0):
+        # 1.0.0 and 2.0.0 are superseded versions: their rows are not
+        # readable by 3.0.0 code (docs/experiment-schema.md Sec. 9).
+        for bad in ("0.9", "1.0", "1.0.0", "2.0.0", "4.0.0", "", None, 1.0):
             with self.subTest(bad=bad):
                 self.assertRejected("public_events",
                                     F.public_event(schema_version=bad),
@@ -206,19 +206,38 @@ class TestBaselineCapabilities(RejectionTestCase):
                             code="baseline_capability_violation")
 
     def test_l_b2_records_a_public_paymaster(self):
-        row = F.erc4337_public_event("B2")
+        row = F.erc4337_public_event("B2-Allowlist")
         validate_record("public_events", row)
         self.assertEqual(row["paymaster"], F.PAYMASTER)
         self.assertEqual(row["paymaster_post_op_gas_limit"], "40000")
 
     def test_b2_publishes_no_privacy_artifacts(self):
-        row = F.erc4337_public_event("B2", commitment=F.HASH_C)
+        row = F.erc4337_public_event("B2-Allowlist", commitment=F.HASH_C)
         self.assertRejected("public_events", row,
                             code="baseline_capability_violation")
 
     def test_unknown_baseline_id(self):
         self.assertRejected("public_events", F.public_event(baseline_id="B9"),
                             code="unknown_baseline")
+
+    def test_the_pooled_b2_id_no_longer_exists(self):
+        """Schema 3.0.0: B2-Allowlist and B2-Signature must not collapse."""
+        self.assertRejected("public_events", F.public_event(baseline_id="B2"),
+                            code="unknown_baseline")
+        for b in ("B2-Allowlist", "B2-Signature"):
+            with self.subTest(baseline=b):
+                validate_record("public_events", F.erc4337_public_event(b))
+
+    def test_warm_workload_only_for_account_abstraction_baselines(self):
+        self.assertRejected("public_events",
+                            F.public_event(baseline_id="B0", workload_id="W1-warm"),
+                            code="baseline_capability_violation")
+        validate_record("public_events",
+                        F.erc4337_public_event("B1", workload_id="W1-warm"))
+
+    def test_unsplit_w1_workload_is_rejected(self):
+        self.assertRejected("public_events", F.public_event(workload_id="W1"),
+                            code="not_in_enum")
 
 
 # --- M: null / not_applicable semantics ------------------------------------
@@ -383,7 +402,7 @@ class TestCrossFieldConsistency(RejectionTestCase):
 
     def test_allowlist_event_records_its_subject_account(self):
         row = F.public_event(
-            baseline_id="B2", event_type="paymaster_event",
+            baseline_id="B2-Allowlist", event_type="paymaster_event",
             calldata_class="paymaster_policy", asset_type="none",
             asset_contract=None, asset_amount=None, method_selector="0xf935d0b0",
             target=F.PAYMASTER, paymaster=F.PAYMASTER, subject_account=F.ADDRESS)

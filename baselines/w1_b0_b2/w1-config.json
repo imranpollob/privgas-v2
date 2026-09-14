@@ -16,8 +16,9 @@
     "max_fee_per_gas": "2000000000"
   },
   "eoa_tx_gas_limits": {
-    "_comment": "Fixed (not estimated) gas limits for plain transactions. b0_action is the recipient EOA's ERC-20 transfer; the sender's ETH allowance for B0 is exactly b0_action * max_fee_per_gas.",
+    "_comment": "Fixed (not estimated) gas limits for plain transactions. b0_action is the recipient EOA's ERC-20 transfer; native_transfer_to_deployed_account is used only when ETH is sent to an already-deployed SimpleAccount (W1-warm), whose payable receive() runs through the ERC-1967 proxy and cannot fit in 21,000 gas; the sender's ETH allowance for B0 is exactly b0_action * max_fee_per_gas.",
     "native_transfer": "21000",
+    "native_transfer_to_deployed_account": "60000",
     "erc20_transfer": "65000",
     "b0_action": "65000",
     "setup_call": "1000000",
@@ -25,20 +26,24 @@
     "bundle": "1000000"
   },
   "userop": {
-    "_comment": "Identical account-side limits for B1 and B2, fixed before any reported result from calibration runs on 2026-09-14 (docs/decision-log.md): B1 validation (deploy + signature + prefund payment) needs between 200k and 250k gas and B2 validation under 200k, so 300k is one shared value with margin; account execution uses ~34k gas, and 60k stays within EntryPoint v0.9.0 PENALTY_GAS_THRESHOLD (40k) so no 10% unused-execution-gas penalty is charged (80k incurred a 4,601-gas penalty in both B1 and B2). B2 additionally carries a paymaster verification limit; its postOp limit is 0 because ObservablePaymaster has no postOp. preVerificationGas is a fixed policy value of the in-repo bundler, not a calldata-cost estimate. B1's native funding is exactly the EntryPoint required prefund: (verification + call + preVerification) * max_fee_per_gas.",
+    "_comment": "Identical account-side limits for B1, B2-Allowlist and B2-Signature, fixed before any reported result from calibration runs on 2026-09-14 (docs/decision-log.md): B1 validation (deploy + signature + prefund payment) needs between 200k and 250k gas and B2 validation under 200k, so 300k is one shared value with margin; account execution uses ~34k gas, and 60k stays within EntryPoint v0.9.0 PENALTY_GAS_THRESHOLD (40k) so no 10% unused-execution-gas penalty is charged (80k incurred a 4,601-gas penalty in both B1 and B2). B2 additionally carries a paymaster verification limit; its postOp limit is 0 because ObservablePaymaster has no postOp. preVerificationGas is NOT fixed: the in-repo bundler calibrates a break-even value per operation from the actual encoded bundle (experiments/workloads/w1/pvg.py); provisional_pre_verification_gas is only the value used for the calibration dry run and by the Forge semantics tests. B1's native funding is exactly the EntryPoint required prefund with the calibrated value: (verification + call + preVerification) * max_fee_per_gas. Both B2 variants share the paymaster limits; B2-Signature signs validUntil/validAfter = 0/0 (no time bound).",
     "verification_gas_limit": "300000",
     "call_gas_limit": "60000",
-    "pre_verification_gas": "50000",
+    "provisional_pre_verification_gas": "50000",
+    "pre_verification_gas_method": "break_even_calibration_v1",
     "paymaster_verification_gas_limit": "60000",
     "paymaster_post_op_gas_limit": "0",
+    "paymaster_signature_valid_until": "0",
+    "paymaster_signature_valid_after": "0",
     "account_salt": "0",
     "nonce_key": "0"
   },
   "funding": {
-    "_comment": "Setup-phase ETH from the local faucet (anvil dev account 0). Not part of W1 workflow cost; recorded separately.",
+    "_comment": "Setup-phase ETH from the local faucet (anvil dev account 0). Not part of W1 workflow cost; recorded separately. The beneficiary is pre-funded so EntryPoint compensation never pays the one-time 25,000-gas new-account charge (a production bundler's beneficiary already exists). paymaster_deposit is made for each of the two paymasters.",
     "asset_sender_eth": "1000000000000000000",
     "deployer_eth": "10000000000000000000",
     "bundler_eth": "1000000000000000000",
+    "beneficiary_eth": "10000000000000000",
     "sponsor_operator_eth": "1000000000000000000",
     "paymaster_deposit": "100000000000000000"
   }

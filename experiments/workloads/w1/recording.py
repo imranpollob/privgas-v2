@@ -52,7 +52,7 @@ from ...recorder.adapters import (
 from ...recorder.provenance import environment_report, software_revision
 from ...recorder.writers import ExperimentRecorder
 from . import abi
-from .config import BASELINE_EXPERIMENT_IDS, ENTRYPOINT_VERSION
+from .config import ENTRYPOINT_VERSION, EXPERIMENT_IDS
 from .keys import opaque_handle
 from .userop import unpack
 
@@ -78,12 +78,12 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
     contracts = chain_dump["contracts"]
     token = contracts["W1Token"].lower()
     ep = contracts["EntryPoint"].lower()
-    pm = contracts["ObservablePaymaster"].lower()
+    pm = contracts["ObservablePaymaster"].lower()  # the only paymaster with W1 transactions
     deposit_before = chain_dump["state"].get("entrypoint_deposit_before_tx", {})
     out: List[Observation] = []
 
     for t in chain_dump["transactions"]:
-        if t["phase"] != "workflow":
+        if t["phase"] not in ("warmup", "workflow"):
             continue
         tx, rc, blk = t["tx"], t["receipt"], t["block"]
         to = _lower(tx.get("to"))
@@ -202,13 +202,16 @@ def _bundle_observations(chain_dump, t, data, logs, common, tx_gas,
                 outcome="success", success=True, **log_common))
         elif d["event"] == "UserOperationEvent":
             op = op_for(d["sender"])
-            target, _, _ = abi.decode_execute(op["call_data"])
+            # A W1-warm warm-up op deploys the account with empty callData:
+            # there is no target, selector or call class to record.
+            has_call = len(op["call_data"]) >= 4
+            target = abi.decode_execute(op["call_data"])[0] if has_call else None
             rows.append(Observation(
                 event_type="user_operation_event", asset_type="none", log_index=li,
                 sender=d["sender"], target=target, paymaster=d["paymaster"],
                 bundler_beneficiary=beneficiary,
-                method_selector="0x" + op["call_data"][:4].hex(),
-                calldata_class="account_execute", nonce=d["nonce"],
+                method_selector="0x" + op["call_data"][:4].hex() if has_call else None,
+                calldata_class="account_execute" if has_call else None, nonce=d["nonce"],
                 userop=userop_obs(d["userop_hash"], op),
                 actual_gas_used=d["actual_gas_used"], actual_gas_cost=d["actual_gas_cost"],
                 effective_gas_price=tx_gas["effective_gas_price"],
@@ -223,6 +226,8 @@ def bundler_observations(bundler_log: List[Dict[str, Any]]) -> List[BundlerObser
     order: List[Tuple[str, int]] = []
     attempt = 0
     for e in bundler_log:
+        if e["event"] == "pvg_calibration":
+            continue  # an estimation dry run, not a submission (see bundler.py)
         if e["event"] == "received":
             attempt = e["submission_attempt"]
             key = (e["userop_hash"], attempt)
@@ -259,10 +264,12 @@ def ground_truth(chain_dump: Dict[str, Any], private: Dict[str, Any], seed: int,
     b = chain_dump["baseline_id"]
     roles = private["roles"]
     labels = {v: k for k, v in private["tx_labels"].items()}
-    userop_hash = chain_dump["userops"][0]["userop_hash"] if chain_dump["userops"] else None
+    measured = [u for u in chain_dump["userops"] if u["label"] == "w3_bundle"]
+    userop_hash = measured[0]["userop_hash"] if measured else None
     action_tx = labels.get("w3_recipient_action") or labels.get("w3_bundle")
     subject = action_tx if b == "B0" else userop_hash
-    funder_handle = (opaque_handle(seed, "sponsor", "sponsor_operator") if b == "B2"
+    sponsored = chain_dump["paymaster_used"] is not None
+    funder_handle = (opaque_handle(seed, "sponsor", "sponsor_operator") if sponsored
                      else opaque_handle(seed, "sender", "asset_sender"))
     actor = opaque_handle(seed, "actor", "actor")
     return GroundTruth(
@@ -279,8 +286,8 @@ def ground_truth(chain_dump: Dict[str, Any], private: Dict[str, Any], seed: int,
                          candidate_set_id="w1-actors"),
         public_anchors={
             "stealth_account_address": roles["recipient_account"],
-            "funding_address": (chain_dump["contracts"]["ObservablePaymaster"] if b == "B2"
-                                else roles["asset_sender"]),
+            "funding_address": (chain_dump["contracts"][chain_dump["paymaster_used"]]
+                                if sponsored else roles["asset_sender"]),
             "asset_sender_address": roles["asset_sender"],
             "established_wallet_address": roles["established_wallet"],
             "transaction_hash": action_tx,
@@ -309,7 +316,31 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
     c = chain_dump["contracts"]
     cfg = chain_dump["config"]
     arts = chain_dump["artifacts"]
-    aa = b in ("B1", "B2")
+    aa = b != "B0"
+    pm_name = chain_dump["paymaster_used"]
+    paymaster = None
+    if pm_name == "ObservablePaymaster":
+        paymaster = {
+            "kind": "observable_paymaster_allowlist", "name": pm_name,
+            "baseline_role": "auxiliary (public on-chain sponsor->account allowlist "
+                             "transaction before the operation)",
+            "authorization_rule": "sponsored[userOp.sender] == true "
+                                  "(owner-managed public allowlist)"}
+    elif pm_name == "SignatureVerifyingPaymaster":
+        paymaster = {
+            "kind": "signature_verifying_paymaster", "name": pm_name,
+            "baseline_role": "ordinary public Paymaster, off-chain authorization",
+            "authorization_rule": "ECDSA.recover(EntryPoint.getUserOpHash(userOp), "
+                                  "paymasterSignature) == verifyingSigner; signature in "
+                                  "the v0.9.0 PAYMASTER_SIG_MAGIC suffix; signed data "
+                                  "abi.encode(uint48 validUntil, uint48 validAfter)",
+            "verifying_signer": chain_dump["signature_paymaster_verifying_signer"]}
+    if paymaster is not None:
+        paymaster.update({
+            "address": c[pm_name],
+            "version": f"baselines/w1_b0_b2/src/{pm_name}.sol",
+            "deployed_bytecode_sha256": arts[pm_name]["deployed_bytecode_sha256"],
+            "privacy_mechanism": None})
     return {
         "entrypoint": ({"address": c["EntryPoint"], "version": ENTRYPOINT_VERSION,
                         "source": chain_dump["entrypoint_provenance"]} if aa else None),
@@ -323,17 +354,17 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
                  arts["SimpleAccount"]["deployed_bytecode_sha256"]}
             if aa else {"kind": "eoa", "version": None,
                         "note": "fresh externally-owned account; no contract code"}),
-        "paymaster": ({"kind": "observable_paymaster", "name": "ObservablePaymaster",
-                       "address": c["ObservablePaymaster"],
-                       "version": "baselines/w1_b0_b2/src/ObservablePaymaster.sol",
-                       "deployed_bytecode_sha256":
-                           arts["ObservablePaymaster"]["deployed_bytecode_sha256"],
-                       "authorization_rule": "sponsored[userOp.sender] == true "
-                                             "(owner-managed public allowlist)",
-                       "privacy_mechanism": None} if b == "B2" else None),
-        "bundler": ({"kind": "in_repo_instrumented_bundler", **chain_dump["bundler"],
-                     "erc7562_enforced": False, "public_mempool": False}
+        "paymaster": paymaster,
+        "bundler": ({"kind": "in_repo_instrumented_experimental_bundler",
+                     **chain_dump["bundler"], "erc7562_enforced": False,
+                     "public_mempool": False, "production_compatibility": "not established",
+                     "pvg_calibrations": chain_dump["pvg_calibrations"]}
                     if aa else None),
+        "workload": {"id": chain_dump["workload_id"],
+                     "account_deployed_before_measured_action":
+                         chain_dump["workload_id"] == "W1-warm",
+                     "role": ("primary" if chain_dump["workload_id"] == "W1-cold"
+                              else "ablation (not the primary workflow)")},
         "asset": {"kind": "erc20", "address": c["W1Token"],
                   "decimals": cfg["token"]["decimals"],
                   "deployed_bytecode_sha256": arts["W1Token"]["deployed_bytecode_sha256"]},
@@ -347,20 +378,30 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
     }
 
 
+_COMMON_NOTE = ("MEASURED. Real signed transactions on a private local anvil devnet "
+                "(chain id 31337). Setup-phase transactions (faucet funding, all "
+                "contract deployments, both Paymaster deposits) are identical for every "
+                "baseline and workload and are not recorded as events. AA operations use "
+                "the in-repo INSTRUMENTED EXPERIMENTAL bundler (no public mempool, no "
+                "ERC-7562 enforcement, not production-compatible) with a break-even "
+                "calibrated preVerificationGas. ")
+
 NOTES = {
-    "B0": "MEASURED. Real signed transactions on a private local anvil devnet "
-          "(chain id 31337). W1 via a sender-funded fresh EOA. Setup-phase "
-          "transactions (faucet funding, contract deployment, Paymaster deposit) "
-          "are identical for B0/B1/B2 and are not recorded as events.",
-    "B1": "MEASURED. Real signed transactions on a private local anvil devnet "
-          "(chain id 31337). W1 via a sender-funded eth-infinitism SimpleAccount "
-          "v0.9.0 through the in-repo instrumented bundler (no public mempool, no "
-          "ERC-7562 enforcement). Setup phase identical for B0/B1/B2, not recorded "
-          "as events.",
-    "B2": "MEASURED. Real signed transactions on a private local anvil devnet "
-          "(chain id 31337). W1 via the same SimpleAccount and bundler as B1, "
-          "sponsored by ObservablePaymaster (public allowlist). Setup phase "
-          "identical for B0/B1/B2, not recorded as events.",
+    ("B0", "W1-cold"): _COMMON_NOTE + "W1-cold via a sender-funded fresh EOA.",
+    ("B1", "W1-cold"): _COMMON_NOTE + "W1-cold (primary): sender-funded SimpleAccount "
+                       "v0.9.0 deployed by the measured UserOperation; no Paymaster.",
+    ("B1", "W1-warm"): _COMMON_NOTE + "W1-warm (ABLATION, not the primary workflow): the "
+                       "same SimpleAccount is deployed by an earlier sender-funded "
+                       "warm-up UserOperation, whose rows are included here but whose "
+                       "cost is excluded from the measured action.",
+    ("B2-Allowlist", "W1-cold"): _COMMON_NOTE + "W1-cold via the same SimpleAccount, "
+                       "sponsored by ObservablePaymaster. AUXILIARY baseline: its public "
+                       "setSponsored transaction links sponsor and account before the "
+                       "operation.",
+    ("B2-Signature", "W1-cold"): _COMMON_NOTE + "W1-cold via the same SimpleAccount, "
+                       "sponsored by SignatureVerifyingPaymaster (sponsor ECDSA signature "
+                       "over the EntryPoint userOpHash; no on-chain authorization "
+                       "transaction).",
 }
 
 
@@ -369,17 +410,18 @@ def record_run(chain_dump: Dict[str, Any], bundler_log: List[Dict[str, Any]],
                root: Path, clock: Optional[Callable[[], str]] = None,
                env_report=None, revision=None) -> Dict[str, Any]:
     b = chain_dump["baseline_id"]
-    experiment_id = BASELINE_EXPERIMENT_IDS[b]
+    w = chain_dump["workload_id"]
+    experiment_id = EXPERIMENT_IDS[(b, w)]
     rp = paths_mod.run_paths(experiment_id, run_id, root)
     adapter = for_baseline(b)()
     adapter.chain_id = chain_dump["environment"]["chain_id"]
 
     rec = ExperimentRecorder(
-        experiment_id=experiment_id, run_id=run_id, baseline_id=b, workload_id="W1",
+        experiment_id=experiment_id, run_id=run_id, baseline_id=b, workload_id=w,
         seed=seed, chain_id=adapter.chain_id, components=components(chain_dump, private),
         data_origin="measured", paths=rp,
         revision=revision or software_revision(root),
-        env_report=env_report or environment_report(root), clock=clock, notes=NOTES[b])
+        env_report=env_report or environment_report(root), clock=clock, notes=NOTES[(b, w)])
 
     written: Dict[str, List[Dict[str, Any]]] = {
         "public_events": [], "bundler_private": [], "ground_truth": []}

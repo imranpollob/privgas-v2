@@ -79,9 +79,9 @@ baselines-test: baselines-build ## Forge semantics tests + live anvil tests for 
 	@echo "Running B0/B1/B2 live W1 tests against anvil..."
 	@python3 -m unittest discover -s experiments/workloads/w1/tests -t .
 
-run-matched-baselines: ## One REAL W1 run per baseline through the recorder: make run-matched-baselines SEED=<seed> [BASELINE=B0|B1|B2|all]
-	@if [ -z "$(SEED)" ]; then echo "ERROR: SEED is required, e.g. make run-matched-baselines SEED=42 BASELINE=all"; exit 1; fi
-	@python3 -m experiments.workloads.w1 --baseline $(or $(BASELINE),all) --seed $(SEED)
+run-matched-baselines: ## Real W1 runs (B0, B1 cold/warm, B2-Allowlist, B2-Signature) through the recorder: make run-matched-baselines SEED=<seed> [VARIANT=all]
+	@if [ -z "$(SEED)" ]; then echo "ERROR: SEED is required, e.g. make run-matched-baselines SEED=42 [VARIANT=B1:W1-warm]"; exit 1; fi
+	@python3 -m experiments.workloads.w1 --variant $(or $(VARIANT),all) --seed $(SEED)
 
 benchmark: ## Run the benchmark suite (placeholder until protocol code exists)
 	@echo "No benchmarks defined yet — add them under experiments/ and wire this target"

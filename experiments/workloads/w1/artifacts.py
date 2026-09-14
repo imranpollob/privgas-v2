@@ -18,6 +18,8 @@ CONTRACTS = {
     "SimpleAccount": ("SimpleAccount.sol", "SimpleAccount"),
     "W1Token": ("W1Token.sol", "W1Token"),
     "ObservablePaymaster": ("ObservablePaymaster.sol", "ObservablePaymaster"),
+    "SignatureVerifyingPaymaster": ("SignatureVerifyingPaymaster.sol",
+                                    "SignatureVerifyingPaymaster"),
 }
 
 

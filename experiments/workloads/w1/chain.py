@@ -115,6 +115,14 @@ class Chain:
     def set_coinbase(self, address: str) -> None:
         self.rpc.call("anvil_setCoinbase", [address])
 
+    def snapshot(self) -> str:
+        """Devnet state snapshot; used only for the preVerificationGas dry run."""
+        return self.rpc.call("evm_snapshot")
+
+    def revert(self, snapshot_id: str) -> None:
+        if self.rpc.call("evm_revert", [snapshot_id]) is not True:
+            raise RuntimeError("evm_revert failed; calibration state would leak")
+
     # --- writes ---------------------------------------------------------------
 
     def build_tx(self, sender, *, to: Optional[str], data: bytes = b"",
@@ -137,21 +145,26 @@ class Chain:
         signed = Account.sign_transaction(tx, sender.key)
         return bytes(signed.raw_transaction)
 
-    def broadcast(self, raw: bytes, label: str, phase: str) -> SentTx:
-        """Submit a signed transaction and return it once mined (automine)."""
+    def broadcast(self, raw: bytes, label: str, phase: str,
+                  record: bool = True) -> SentTx:
+        """Submit a signed transaction and return it once mined (automine).
+
+        ``record=False`` is for calibration dry runs inside a snapshot that is
+        reverted: the transaction is never part of the run's chain history.
+        """
         self.pin_next_base_fee()
         try:
             tx_hash = self.rpc.call("eth_sendRawTransaction", ["0x" + raw.hex()])
         except RpcError as e:
             raise TxRejected(label, e) from e
-        return self.mined(tx_hash, label, phase)
+        return self.mined(tx_hash, label, phase, record)
 
     def send(self, sender, *, label: str, phase: str, to: Optional[str],
-             data: bytes = b"", value: int = 0, gas: int) -> SentTx:
+             data: bytes = b"", value: int = 0, gas: int, record: bool = True) -> SentTx:
         tx = self.build_tx(sender, to=to, data=data, value=value, gas=gas)
-        return self.broadcast(self.sign(sender, tx), label, phase)
+        return self.broadcast(self.sign(sender, tx), label, phase, record)
 
-    def mined(self, tx_hash: str, label: str, phase: str) -> SentTx:
+    def mined(self, tx_hash: str, label: str, phase: str, record: bool = True) -> SentTx:
         receipt = None
         for _ in range(200):  # automine mines immediately; the receipt can lag briefly
             receipt = self.rpc.call("eth_getTransactionReceipt", [tx_hash])
@@ -167,5 +180,6 @@ class Chain:
         st = SentTx(label=label, phase=phase, tx=tx, receipt=receipt, block=header)
         if un(receipt["status"]) != 1 and phase == "setup":
             raise RuntimeError(f"setup transaction {label} reverted")
-        self.sent.append(st)
+        if record:
+            self.sent.append(st)
         return st

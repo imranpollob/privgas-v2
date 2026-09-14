@@ -290,8 +290,8 @@ evidence of distinct honest participants.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0..B6). The experimental condition, known to the attacker by construction. |
-| `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1 ERC-20, W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3..B6). The experimental condition, known to the attacker by construction. |
+| `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | required | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
 | `data_origin` | public | A0 | required | 'measured' for rows derived from an actual execution; 'synthetic_fixture' for hand-written examples and test data. Synthetic rows are confined to run_ids prefixed 'synthetic-'. |
@@ -396,8 +396,8 @@ code rather than frozen into the raw record.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0..B6). The experimental condition, known to the attacker by construction. |
-| `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1 ERC-20, W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3..B6). The experimental condition, known to the attacker by construction. |
+| `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | `null` ok | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
 | `data_origin` | public | A0 | required | 'measured' for rows derived from an actual execution; 'synthetic_fixture' for hand-written examples and test data. Synthetic rows are confined to run_ids prefixed 'synthetic-'. |
@@ -472,7 +472,8 @@ Derived from `docs/research-plan.md` §5 and enforced by the validator
 |----------|----------|---------|-----------|---------------|--------------------|
 | B0 sender-funded EOA | no | no | no | no | no |
 | B1 sender-funded smart account | yes | yes | no | no | no |
-| B2 observable Paymaster | yes | yes | yes | no | no |
+| B2-Allowlist observable allowlist Paymaster (auxiliary) | yes | yes | yes | no | no |
+| B2-Signature signature-verifying Paymaster | yes | yes | yes | no | no |
 | B3 PrivGas v1 | yes | yes | yes | yes | yes |
 | B4 independent credit (reserved) | yes | yes | yes | yes | yes |
 | B5 prior-art prepaid (reserved) | yes | yes | yes | yes | yes |
@@ -481,9 +482,9 @@ Derived from `docs/research-plan.md` §5 and enforced by the validator
 A record that populates a field its baseline does not have is rejected. A B0
 row carrying a `userop_hash` fails, because a fabricated UserOperation would
 make B0 look like an account-abstraction baseline and would invent exactly the
-sponsorship metadata D1 exists to isolate. The B0–B2 rows were confirmed
-against the real implementations (`baselines/w1_b0_b2`, 2026-09-14): all five
-flags held. Rows for B4–B6 are reserved: the capability flags encode the plan,
+sponsorship metadata D1 exists to isolate. The B0, B1, B2-Allowlist and
+B2-Signature rows were confirmed against the real implementations
+(`baselines/w1_b0_b2`, 2026-09-14): all five flags held for each. Rows for B4–B6 are reserved: the capability flags encode the plan,
 not an implementation, and B6's in particular must be confirmed against real
 code before use.
 
@@ -525,8 +526,8 @@ which wrongly made a public on-chain value look A2-only.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0..B6). The experimental condition, known to the attacker by construction. |
-| `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1 ERC-20, W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3..B6). The experimental condition, known to the attacker by construction. |
+| `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | `null` ok | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
 | `data_origin` | public | A0 | required | 'measured' for rows derived from an actual execution; 'synthetic_fixture' for hand-written examples and test data. Synthetic rows are confined to run_ids prefixed 'synthetic-'. |
@@ -693,12 +694,24 @@ it as a privacy finding.
 
 ## 9. Schema versioning
 
-`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`2.0.0`**.
+`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`3.0.0`**.
 
 ### 9.0 Change log
 
+- **`3.0.0`** (2026-09-14) — pre-Prompt-4 baseline hardening
+  (`docs/w1-baselines.md`, `docs/decision-log.md`). MAJOR because existing
+  enum values split and change meaning: `baseline_id` `"B2"` is removed and
+  replaced by `"B2-Allowlist"` (the former B2, now auxiliary) and
+  `"B2-Signature"`, so the two ordinary Paymaster designs can never share a
+  baseline_id; `workload_id` `"W1"` is removed and replaced by `"W1-cold"`
+  (primary; a smart account is deployed by the measured operation) and
+  `"W1-warm"` (AA-only ablation; account deployed beforehand). New cross-field
+  rule in every stream: `W1-warm` is rejected for baselines without ERC-4337.
+  No field was added or removed. 2.0.0 measured runs were archived under
+  `data/private/archive/schema-2.0.0/`; synthetic examples were regenerated.
+
 - **`2.0.0`** (2026-09-14) — corrections forced by the first real B0/B1/B2
-  runs (`docs/w1-baselines.md` §7, `docs/decision-log.md`). MAJOR because:
+  runs (`docs/w1-baselines.md` §14, `docs/decision-log.md`). MAJOR because:
   `bundler_private.bundle_transaction_hash` removed and replaced by
   `submitted_bundle_transaction_hash` + `bundle_submission_timestamp_utc`
   (the mined hash is public); the address rule narrowed to lowercase; tier
@@ -792,3 +805,8 @@ ways, all deliberate:
 9. **No A1 data exists yet.** The in-repo bundler has no public mempool, so no
    measured run contains pre-inclusion public UserOperation observations,
    replacement behaviour or fee changes.
+10. **The in-repo bundler is experimental.** `privgas-minibundler-v1` is an
+    instrumented experimental bundler; it does not establish ERC-7562 or
+    production compatibility, and staking requirements were not tested. An
+    independent compatible bundler is required before D2 liveness claims,
+    production-compatibility claims, or replication of D1 results.

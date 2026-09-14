@@ -19,11 +19,22 @@ What it does, per UserOperation:
 4. **observe inclusion** -- receipt, inclusion timestamp, and the mined hash
    (public on chain from that point on).
 
-What it deliberately does NOT do, and therefore what B1/B2 results do not
-cover: no ERC-7562 opcode/storage tracing, no reputation or staking policy,
-no public alt-mempool (so no A1 observer exists for these runs), no
-multi-op bundling, no fee replacement, no calldata-based preVerificationGas
-estimation (preVerificationGas is a fixed config value).
+Plus, before the wallet signs the final operation, **preVerificationGas
+calibration** (``calibrate_pre_verification_gas``; method in ``pvg.py``): a
+break-even value derived from a dry run of the exact encoded bundle inside a
+reverted devnet snapshot, logged to the raw bundler log as a
+``pvg_calibration`` event (it is the analogue of an
+``eth_estimateUserOperationGas`` request, not a submission, and produces no
+``bundler_private`` row).
+
+THIS IS AN INSTRUMENTED EXPERIMENTAL BUNDLER. It does not establish ERC-7562
+or production compatibility. What it deliberately does NOT do, and therefore
+what B1/B2 results do not cover: no ERC-7562 opcode/storage tracing, no
+reputation or staking policy (staking requirements are untested, not
+inferred), no public alt-mempool (so no A1 observer exists for these runs), no
+multi-op bundling, no fee replacement, no profit margin. An independent,
+ERC-7562-compatible bundler is required before any D2 liveness claim, any
+production-compatibility claim, and to replicate D1 results.
 
 Raw bundler errors (which embed addresses and revert data) go only to the raw
 log under data/raw/. The recorder receives coarse classes.
@@ -37,7 +48,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from eth_utils import keccak
 
-from . import abi
+from . import abi, pvg
 from .chain import Chain, SentTx
 from .rpc import RpcError
 from .userop import UserOp, get_userop_hash, handle_ops_calldata
@@ -91,7 +102,17 @@ class InstrumentedBundler:
         self.log.append(entry)
         return entry
 
-    def send_user_operation(self, op: UserOp, label: str) -> BundlerOutcome:
+    def calibrate_pre_verification_gas(self, *, label: str, provisional: int,
+                                       build_signed_op, prepare=None) -> pvg.PvgCalibration:
+        cal = pvg.calibrate(self.chain, entrypoint=self.entrypoint,
+                            bundler_account=self.account, beneficiary=self.beneficiary,
+                            bundle_gas_limit=self.bundle_gas_limit, provisional=provisional,
+                            build_signed_op=build_signed_op, prepare=prepare)
+        self._emit({"event": "pvg_calibration", "label": label,
+                    "timestamp_utc": self.clock(), **cal.as_dict()})
+        return cal
+
+    def send_user_operation(self, op: UserOp, label: str, phase: str = "workflow") -> BundlerOutcome:
         entries: List[Dict[str, Any]] = []
         received = self.clock()
         userop_hash = get_userop_hash(self.chain, self.entrypoint, op)
@@ -135,7 +156,7 @@ class InstrumentedBundler:
             "userop_hash": userop_hash,
             "submitted_bundle_transaction_hash": submitted_hash}))
 
-        mined = self.chain.broadcast(raw, label=label, phase="workflow")
+        mined = self.chain.broadcast(raw, label=label, phase=phase)
         included = self.clock()
         if mined.hash != submitted_hash:  # pragma: no cover - automine, no replacement
             raise RuntimeError("mined bundle hash differs from the submitted hash")

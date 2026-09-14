@@ -14,9 +14,7 @@ import {ObservablePaymaster} from "../src/ObservablePaymaster.sol";
 contract B2PublicPaymasterTest is W1Base {
     function setUp() public override {
         super.setUp();
-        vm.deal(sponsorOperator, PAYMASTER_DEPOSIT);
-        vm.prank(sponsorOperator);
-        paymaster.deposit{value: PAYMASTER_DEPOSIT}();
+        fundPaymasters();
     }
 
     function _sponsor(address account) internal {

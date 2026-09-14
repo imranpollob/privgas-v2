@@ -104,8 +104,8 @@ class ExperimentRecorder:
     Usage::
 
         with ExperimentRecorder.start(
-                experiment_id="privacy/d1-w1-b2", baseline_id="B2",
-                workload_id="W1", seed=42, chain_id=31337,
+                experiment_id="privacy/d1-w1-b2", baseline_id="B2-Signature",
+                workload_id="W1-cold", seed=42, chain_id=31337,
                 components={...}) as rec:
             rec.record_public_event({...})
             rec.record_bundler_private({...})

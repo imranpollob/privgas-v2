@@ -51,7 +51,7 @@ def envelope(stream: str, seq: int = 0, baseline_id: str = "B0",
         "record_id": build_record_id(RUN_ID, stream, seq),
         "seq": seq,
         "baseline_id": baseline_id,
-        "workload_id": "W1",
+        "workload_id": "W1-cold",
         "scenario_id": scenario_id,
         "software_revision": dict(CLEAN_REVISION),
         "data_origin": "synthetic_fixture",
@@ -138,7 +138,7 @@ def erc4337_public_event(baseline_id: str = "B1", seq: int = 0, **overrides
         "actual_gas_cost": "536000000000000",
         "bundler_beneficiary": "0xbeee000000000000000000000000000000000001",
     })
-    if baseline_id == "B2":
+    if baseline_id.startswith("B2"):
         row.update({
             "paymaster": PAYMASTER,
             "paymaster_verification_gas_limit": "80000",

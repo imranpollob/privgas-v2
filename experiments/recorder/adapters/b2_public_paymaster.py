@@ -1,4 +1,10 @@
-"""B2 -- ordinary, fully observable Paymaster.
+"""B2-Allowlist and B2-Signature -- ordinary, fully observable Paymasters.
+
+Two adapters, two baseline_ids (schema 3.0.0). They record identically; they
+exist separately so the two Paymaster designs can never be pooled under one
+baseline_id. B2-Allowlist publishes a sponsor->account allowlist transaction
+before the operation (auxiliary baseline); B2-Signature authorizes off chain
+with a sponsor signature carried in paymasterAndData.
 
 docs/research-plan.md Sec. 5: a standard non-private Paymaster sponsors the
 same operation B1 performs, using the same account code, same token, same
@@ -28,5 +34,11 @@ from __future__ import annotations
 from .base import BaselineAdapter
 
 
-class B2Adapter(BaselineAdapter):
-    baseline_id = "B2"
+class B2AllowlistAdapter(BaselineAdapter):
+    """B2-Allowlist: ObservablePaymaster, public on-chain allowlist (auxiliary)."""
+    baseline_id = "B2-Allowlist"
+
+
+class B2SignatureAdapter(BaselineAdapter):
+    """B2-Signature: SignatureVerifyingPaymaster, sponsor signature over userOpHash."""
+    baseline_id = "B2-Signature"

@@ -50,6 +50,7 @@ from .common import (
     envelope_fields,
     rule_record_id_matches,
     rule_synthetic_run_id_prefix,
+    rule_workload_matches_baseline,
 )
 
 STREAM = "bundler_private"
@@ -251,6 +252,7 @@ SCHEMA = StreamSchema(
     ),
     cross_field_rules=(
         rule_synthetic_run_id_prefix,
+        rule_workload_matches_baseline,
         rule_record_id_matches,
         _rule_baseline_has_bundler,
         _rule_simulation_consistency,
