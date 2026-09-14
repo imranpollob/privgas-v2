@@ -31,6 +31,18 @@ A baseline must:
 | B3 | `baselines/b3_privgas_v1` (git submodule, pinned `02a3f0ab...e43a3e`) | The accepted PrivGas v1 implementation, reproduced as faithfully as possible — evaluated as a specimen, not improved. See `docs/b3-reproduction.md` for test results, dependency/version provenance, and a documented ordinary-key deployment failure (PoseidonT3 exceeds EIP-170). | (this repo's next commit) |
 | B0-B2, B4-B6 | not yet implemented | Sender-funded EOA / sender-funded smart account / observable Paymaster / independent-issuance credit / prior-art prepaid Paymaster / shielded-pool reference — see `docs/research-plan.md` §5. | — |
 
+Recording infrastructure for B0-B2 exists ahead of the baselines themselves:
+`experiments/recorder/adapters/` holds one adapter per baseline and
+`experiments/recorder/baselines.py` declares each baseline's structural
+capabilities (does it use ERC-4337, a bundler, a Paymaster, a credit system,
+publishable privacy artefacts), which the record validator enforces. The
+capability rows for B0-B2 and B4-B6 encode `docs/research-plan.md` §5, **not**
+an observed implementation; when a baseline is actually built, any discrepancy
+is fixed in that table with a `docs/decision-log.md` entry, never by relaxing
+the validator. The example runs under `experiments/recorder/examples/` are
+synthetic fixtures for testing the recorder and are not measurements — see
+`docs/experiment-schema.md` §10.
+
 ## Directory convention (once baselines exist)
 
 ```

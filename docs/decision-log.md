@@ -148,3 +148,96 @@ Format for each entry:
   `@account-abstraction/contracts@0.9.0` was considered but not pursued;
   the git commit/tag match is direct, stronger evidence (byte-for-byte,
   not just a version string) and was sufficient on its own.
+
+## 2026-09-14: Experiment recorder — three streams, and `seed` reclassified as secret
+
+- **Decision**: Built the versioned experiment recorder under
+  `experiments/` with three JSONL streams (`ground_truth.jsonl`,
+  `public_events.jsonl`, `bundler_private.jsonl`), schema version `1.0.0`,
+  and `docs/experiment-schema.md` as the canonical definition. Within that,
+  one classification was genuinely ambiguous and was resolved deliberately:
+  **`seed` is secret**. It lives in `run_manifest.private.json` and
+  `ground_truth.jsonl`; the public manifest carries `"seed": null` plus
+  `seed_commitment_sha256 = sha256({"namespace": run_id, "value": seed})`.
+- **Why**: `docs/research-plan.md` §10 lists `seed` under `ground_truth.jsonl`
+  while `docs/experiment-schema.md` §1 lists it in the public per-run
+  metadata. Those coexist fine for a metadata-only run, but conflict once an
+  attack is run against the data: the seed determines the hidden assignment of
+  actors to accounts and to timing, so publishing it during the attack phase
+  publishes the answer key in compressed form. The commitment keeps the seed
+  pinned — a later reveal is checkable — without disclosing it. It is binding,
+  not hiding (the seed space is small and enumerable), and is recorded as such
+  so nothing later mistakes it for a privacy mechanism. Metadata-only runs
+  that record no linkage labels are unaffected and still carry the seed in the
+  clear.
+- **Alternatives considered**: leaving the seed public, since the harness is
+  ours and the workload is documented — rejected because it would silently
+  hand every attack a shortcut and make any measured ΔL meaningless. Omitting
+  the seed from public output entirely with no commitment — rejected because
+  then nothing pins the value and a seed could be chosen after seeing results.
+
+## 2026-09-14: Public/private data separation is a process boundary, not a convention
+
+- **Decision**: `experiments/attacker_view/` (reads public + bundler data) and
+  `experiments/labels/` (reads secret ground truth) are **mutually
+  unimportable within one Python process** — importing either installs a
+  `sys.meta_path` finder that refuses to resolve the other, so even
+  `importlib` fails. Feature generation and evaluation must run in separate
+  processes, communicating through a predictions file frozen with a sha256
+  that `join_for_evaluation` verifies before any label is loaded.
+  `experiments/recorder/` is neutral and importable from both sides.
+- **Why**: Prompt 3 §12 requires structural protection rather than a comment
+  saying "do not use this file". An import-time `ImportError` is testable,
+  survives refactoring, and cannot be bypassed by a dynamic import; a naming
+  convention cannot. Freezing predictions before labels are readable is what
+  makes "predict, then score" the path of least resistance and makes the
+  reverse leave evidence in the recorded artefacts.
+- **Alternatives considered**: relying on directory separation plus code
+  review alone — rejected as exactly the "comments as enforcement" pattern the
+  task rules out. Note the limit, recorded in `docs/experiment-schema.md` §10:
+  this stops accidental and casual access, not a script that calls `open()` on
+  `data/private/` directly. It is not a sandbox.
+
+## 2026-09-14: B0/B1/B2 recorder integration uses labelled synthetic fixtures, because those baselines do not exist
+
+- **Decision**: Prompt 3 §18 asks for "one representative W1 run" of B0, B1 and
+  B2 through the recorder. `baselines/` contains only `b3_privgas_v1` — Prompt
+  2 has not been performed, and no Prompt 2 handoff report exists in the
+  repository. Rather than skip the integration or manufacture measured runs,
+  each baseline gets a **synthetic fixture run** under
+  `experiments/recorder/examples/`, with a mandatory `data_origin` field
+  (`"measured"` vs `"synthetic_fixture"`) that the validator ties to a
+  `synthetic-` run_id prefix in both directions.
+- **Why**: the recorder is baseline-independent by design, so it can be built
+  and tested in full before the baselines land; but writing invented gas
+  figures and transaction hashes into `data/public/` as if they were
+  measurements would corrupt the very record the recorder exists to keep
+  honest. Making origin a validated schema field — rather than a README
+  warning — means a fixture can never later be mistaken for a measurement,
+  including by code that only reads a single row.
+- **Alternatives considered**: implementing B0/B1/B2 as part of this task —
+  rejected, that is Prompt 2's scope and would have been an unreviewed
+  expansion. Deferring §18 entirely — rejected, it would have left the
+  per-baseline capability rules (no UserOperation for B0, null Paymaster for
+  B1, public Paymaster for B2, no bundler stream for B0) untested.
+
+## 2026-09-14: Observer tiers are separate directories, and `bundler_private` is not secret
+
+- **Decision**: `data/public/<experiment>/<run>/observer_a0a1/public_events.jsonl`
+  and `.../observer_a2/bundler_private.jsonl`, with ground truth in
+  `data/private/`. A baseline with no bundler (B0) gets no bundler file **and**
+  no `observer_a2/` directory.
+- **Why**: `docs/research-plan.md` §7 and `docs/threat-model.md` require that
+  A2 data never leaks into an A0/A1 dataset. With tier subdirectories, an
+  A0/A1 dataset is assembled by naming `observer_a0a1/`, and a glob cannot
+  pick up bundler rows by accident; including A2 data requires naming the
+  other directory, which is the visible, deliberate act the threat model asks
+  for. An empty `observer_a2/` directory for B0 was rejected because it reads
+  as "we instrumented a bundler and saw nothing", which is false — B0 never
+  reaches a mempool. Note the naming trap, recorded in the schema doc:
+  `bundler_private.jsonl` is private *with respect to the public ledger*, not
+  secret; it is a legitimate attacker input at tier A2. Only
+  `ground_truth.jsonl` is secret.
+- **Alternatives considered**: a fourth top-level `data/bundler/` root —
+  rejected to stay within the `raw/public/private` policy established in
+  Prompt 0.

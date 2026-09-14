@@ -8,7 +8,8 @@ SHELL := /bin/bash
 CHAIN_ID ?= unset
 ENTRYPOINT_VERSION ?= unset
 
-.PHONY: help install test benchmark run-local-experiment clean env-report
+.PHONY: help install test benchmark run-local-experiment clean env-report \
+        recorder-test recorder-examples recorder-selfcheck recorder-docs
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
@@ -24,8 +25,11 @@ install: ## Verify required tooling is present (no app dependencies exist yet)
 	@echo "(no contracts/circuits/app code has been added — see docs/decision-log.md)."
 	@echo "Run 'make env-report' for the full version report."
 
-test: ## Run the test suite (currently: scaffold self-checks only)
-	@echo "Running scaffold self-checks (no application code exists yet)..."
+test: scaffold-test recorder-test ## Run the full test suite
+
+.PHONY: scaffold-test
+scaffold-test: ## Repository-layout and gitignore self-checks
+	@echo "Running scaffold self-checks..."
 	@test -f .gitignore || { echo "FAIL: .gitignore missing"; exit 1; }
 	@mkdir -p data/private
 	@tmpfile="data/private/.selftest-$$$$"; \
@@ -43,6 +47,19 @@ test: ## Run the test suite (currently: scaffold self-checks only)
 	 done
 	@echo "PASS: expected directory layout present"
 	@echo "All scaffold self-checks passed."
+
+recorder-test: ## Run the experiment-recorder + data-boundary test suite
+	@echo "Running experiment-recorder tests..."
+	@python3 -m unittest discover -s experiments/tests -t .
+
+recorder-examples: ## Regenerate the synthetic B0/B1/B2 example runs
+	@python3 -m experiments.recorder.examples.generate
+
+recorder-selfcheck: ## Scan data/public/ for leaked private fields and values
+	@python3 -m experiments.labels --all-runs
+
+recorder-docs: ## Regenerate the schema field tables in docs/experiment-schema.md
+	@python3 -m experiments.recorder.docgen --write
 
 benchmark: ## Run the benchmark suite (placeholder until protocol code exists)
 	@echo "No benchmarks defined yet — add them under experiments/ and wire this target"
