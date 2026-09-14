@@ -44,6 +44,7 @@ class Observation:
 
     sender: Optional[str] = None
     target: Optional[str] = None
+    subject_account: Optional[str] = None
     paymaster: Optional[str] = None
     bundler_beneficiary: Optional[str] = None
 
@@ -112,7 +113,9 @@ class BundlerObservation:
     rejection_message_class: Optional[str] = None
     replacement_lineage: Optional[List[str]] = None
     inclusion_timestamp_utc: Optional[str] = None
-    bundle_transaction_hash: Optional[str] = None
+    bundle_submission_timestamp_utc: Optional[str] = None
+    #: Pre-inclusion association only; the mined hash is public (public_events).
+    submitted_bundle_transaction_hash: Optional[str] = None
     rpc_endpoint_id: Optional[str] = None
 
 
@@ -170,6 +173,15 @@ def _u(value: Optional[int]) -> Optional[str]:
     return str(value)
 
 
+def _a(value: Optional[str]) -> Optional[str]:
+    """Address -> canonical lowercase spelling (schema 2.0.0 address rule).
+
+    Checksummed (EIP-55) and lowercase spellings of one account must never
+    appear side by side: every join in the analysis compares strings.
+    """
+    return value.lower() if isinstance(value, str) else value
+
+
 EMPTY_ANCHORS = {
     "stealth_account_address": None,
     "funding_address": None,
@@ -210,18 +222,19 @@ class BaselineAdapter:
             "log_index": obs.log_index,
             "transaction_hash": obs.transaction_hash,
             "userop_hash": uo.userop_hash if uo else None,
-            "entrypoint_address": uo.entrypoint_address if uo else None,
+            "entrypoint_address": _a(uo.entrypoint_address) if uo else None,
             "entrypoint_version": uo.entrypoint_version if uo else None,
-            "factory": uo.factory if uo else None,
-            "sender": obs.sender,
-            "paymaster": obs.paymaster,
-            "target": obs.target,
-            "bundler_beneficiary": obs.bundler_beneficiary,
+            "factory": _a(uo.factory) if uo else None,
+            "sender": _a(obs.sender),
+            "paymaster": _a(obs.paymaster),
+            "target": _a(obs.target),
+            "subject_account": _a(obs.subject_account),
+            "bundler_beneficiary": _a(obs.bundler_beneficiary),
             "method_selector": obs.method_selector,
             "calldata_class": obs.calldata_class,
             "nonce": _u(obs.nonce),
             "asset_type": obs.asset_type,
-            "asset_contract": obs.asset_contract,
+            "asset_contract": _a(obs.asset_contract),
             "asset_amount": _u(obs.asset_amount),
             "asset_token_id": _u(obs.asset_token_id),
             # Bucketing is an analysis decision made downstream, where the
@@ -267,7 +280,7 @@ class BaselineAdapter:
             "observer_tier": "A2",
             "bundler_id": obs.bundler_id,
             "userop_hash": obs.userop_hash,
-            "sender": obs.sender,
+            "sender": _a(obs.sender),
             "nonce": _u(obs.nonce),
             "submission_attempt": obs.submission_attempt,
             "receive_timestamp_utc": obs.receive_timestamp_utc,
@@ -278,7 +291,8 @@ class BaselineAdapter:
             "replacement_lineage": lineage,
             "replacement_count": len(lineage) if lineage is not None else None,
             "inclusion_timestamp_utc": obs.inclusion_timestamp_utc,
-            "bundle_transaction_hash": obs.bundle_transaction_hash,
+            "bundle_submission_timestamp_utc": obs.bundle_submission_timestamp_utc,
+            "submitted_bundle_transaction_hash": obs.submitted_bundle_transaction_hash,
             "rpc_endpoint_id": obs.rpc_endpoint_id,
         }
 
@@ -297,6 +311,9 @@ class BaselineAdapter:
 
         anchors = dict(EMPTY_ANCHORS)
         anchors.update(gt.public_anchors)
+        for key in ("stealth_account_address", "funding_address",
+                    "asset_sender_address", "established_wallet_address"):
+            anchors[key] = _a(anchors[key])
 
         return {
             "scenario_id": gt.scenario_id,

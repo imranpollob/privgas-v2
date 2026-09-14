@@ -57,8 +57,9 @@ STREAM = "bundler_private"
 SIMULATION_RESULTS = ("accepted", "rejected", "error", "not_simulated")
 
 REJECTION_CATEGORIES = (
-    "aa_validation_revert",      # simulateValidation reverted
-    "insufficient_prefund",
+    "aa_validation_revert",      # account/factory validation reverted (AA1x/AA2x)
+    "paymaster_validation_revert",  # paymaster validation reverted (AA3x except AA31)
+    "insufficient_prefund",      # payer cannot cover the prefund (AA21 account, AA31 paymaster)
     "opcode_rule_violation",     # ERC-7562 forbidden opcode
     "storage_rule_violation",    # ERC-7562 storage access rule
     "stale_root",                # proof built against a root no longer accepted
@@ -144,6 +145,14 @@ def _rule_simulation_consistency(record: Mapping[str, Any],
             "simulation_result 'not_simulated' contradicts a simulation "
             "timestamp", stream=stream, field="simulation_timestamp_utc",
             code="rejection_inconsistent")
+    if result == "rejected":
+        for name in ("bundle_submission_timestamp_utc",
+                     "submitted_bundle_transaction_hash"):
+            if record[name] is not None:
+                raise RecordValidationError(
+                    "a rejected operation was never placed in a bundle by this "
+                    "bundler", stream=stream, field=name,
+                    code="rejection_inconsistent")
     if result == "rejected" and record["inclusion_timestamp_utc"] is not None:
         raise RecordValidationError(
             "a rejected operation was not included by this bundler; if it was "
@@ -218,10 +227,23 @@ SCHEMA = StreamSchema(
                   "A2",
                   "When the bundler observed the operation included on chain; "
                   "null if it never was.", nullable=True),
-        FieldSpec("bundle_transaction_hash", check_hash32, CLASS_BUNDLER, "A2",
-                  "Hash of the bundle transaction the bundler submitted. "
-                  "Public once mined, but recorded here because the bundler "
-                  "knows it before anyone else does.", nullable=True),
+        FieldSpec("bundle_submission_timestamp_utc", check_timestamp,
+                  CLASS_BUNDLER, "A2",
+                  "When the bundler broadcast the bundle transaction that "
+                  "carried this operation; null if it never submitted one.",
+                  nullable=True),
+        FieldSpec("submitted_bundle_transaction_hash", check_hash32,
+                  CLASS_BUNDLER, "A2",
+                  "The bundler's PRE-INCLUSION association between this "
+                  "operation and the bundle transaction it signed and "
+                  "broadcast; null if it never submitted one. The A2 "
+                  "knowledge is the association before mining (and for "
+                  "bundles that are later replaced or dropped). A MINED "
+                  "bundle transaction hash is public on chain and is "
+                  "recorded in public_events.transaction_hash; this field "
+                  "does not make it private. Replaces 1.0.0 "
+                  "'bundle_transaction_hash', which classified the mined "
+                  "hash as bundler-private.", nullable=True),
         FieldSpec("rpc_endpoint_id", _check_bundler_id, CLASS_BUNDLER, "A2",
                   "Opaque identifier of the RPC endpoint used. Opaque, not a "
                   "URL: URLs carry credentials and host identity.",

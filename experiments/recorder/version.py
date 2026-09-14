@@ -36,10 +36,15 @@ Rules:
 
 from __future__ import annotations
 
-SCHEMA_VERSION = "1.0.0"
+#: 2.0.0 (2026-09-14): corrections forced by the first real B0/B1/B2 runs --
+#: see docs/decision-log.md "Schema 2.0.0" and docs/w1-baselines.md Sec. 7.
+#: MAJOR because a bundler_private field was removed/renamed and field tier
+#: semantics changed. 1.0.0 rows (synthetic fixtures only; no measured 1.0.0
+#: data ever existed) are not readable by this code.
+SCHEMA_VERSION = "2.0.0"
 
 #: Versions this code can read and validate. Explicit allow-list on purpose.
-SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0.0"})
+SUPPORTED_SCHEMA_VERSIONS = frozenset({"2.0.0"})
 
 STREAM_GROUND_TRUTH = "ground_truth"
 STREAM_PUBLIC_EVENTS = "public_events"

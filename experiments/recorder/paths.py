@@ -20,11 +20,11 @@ directory: an A0/A1 dataset is assembled by pointing at
 other directory explicitly. A glob over the A0/A1 directory cannot pick up
 bundler data by accident.
 
-``data/private/**`` is gitignored by the repository's existing policy
-(docs/decision-log.md, 2026-09-13). ``data/public/`` is not, because public
-observations are the publishable artefact -- but see
-docs/experiment-schema.md, "Known limitations", on running the leakage
-self-check before any such directory is committed.
+``data/private/**`` is gitignored (docs/decision-log.md, 2026-09-13).
+Generated runs under ``data/public/`` are gitignored too, except the synthetic
+``*-example/`` runs (docs/decision-log.md, 2026-09-14): they are regenerable,
+and publishing a measured run is an explicit decision taken only after the
+leakage self-check passes.
 """
 
 from __future__ import annotations

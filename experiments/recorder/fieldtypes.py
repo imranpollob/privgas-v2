@@ -26,7 +26,11 @@ from .errors import RecordValidationError
 
 # --- patterns ---------------------------------------------------------------
 
-RE_ADDRESS = re.compile(r"^0x[0-9a-fA-F]{40}$")
+#: Lowercase only (schema 2.0.0). 1.0.0 accepted EIP-55 checksummed and
+#: lowercase spellings side by side, and the first real runs produced both
+#: (RPC transaction fields are lowercase, decoded logs are checksummed), which
+#: would make the same account compare unequal across rows.
+RE_ADDRESS = re.compile(r"^0x[0-9a-f]{40}$")
 RE_HASH32 = re.compile(r"^0x[0-9a-f]{64}$")
 RE_SELECTOR = re.compile(r"^0x[0-9a-f]{8}$")
 RE_UINT_DEC = re.compile(r"^(?:0|[1-9][0-9]*)$")
@@ -81,7 +85,8 @@ def check_string(value, *, field, stream, pattern: re.Pattern, code: str,
 def check_address(value, *, field, stream) -> None:
     if not isinstance(value, str) or not RE_ADDRESS.match(value):
         _fail(stream, field,
-              f"{value!r} is not a 0x-prefixed 20-byte hex Ethereum address",
+              f"{value!r} is not a 0x-prefixed, lowercase, 20-byte hex Ethereum "
+              "address (adapters canonicalise; see adapters.base._a)",
               "malformed_address")
 
 
@@ -151,7 +156,10 @@ def check_timestamp(value, *, field, stream) -> None:
               f"{value!r} is not an ISO-8601 UTC timestamp of the form "
               "YYYY-MM-DDTHH:MM:SSZ", "invalid_timestamp")
     try:
-        datetime.strptime(value.split(".")[0], "%Y-%m-%dT%H:%M:%SZ")
+        # Drop the trailing Z and any fractional part before the calendar
+        # check. (Fixed 2026-09-14: the first real bundler timestamps carried
+        # microseconds, which the regex allows but the old parse rejected.)
+        datetime.strptime(value[:-1].split(".")[0], "%Y-%m-%dT%H:%M:%S")
     except ValueError:
         _fail(stream, field, f"{value!r} is not a real calendar instant",
               "invalid_timestamp")

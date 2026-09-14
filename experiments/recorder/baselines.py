@@ -10,11 +10,13 @@ observations").
 This table describes the *baselines*; it does not describe the mechanism a
 baseline uses and makes no claim about any baseline's privacy properties.
 
-Status caveat: at the time this table was written only B3 exists in
-``baselines/``. B0-B2 and B4-B6 rows encode the specification in
-docs/research-plan.md Sec. 5, not observed implementations. If an implemented
-baseline turns out to differ, the fix is to update this table together with a
-docs/decision-log.md entry, not to relax the validator ad hoc.
+Status: B0, B1 and B2 are implemented in ``baselines/w1_b0_b2`` (runner:
+``experiments/workloads/w1``) and their rows were confirmed against real runs
+on 2026-09-14 -- the capability flags held; see docs/w1-baselines.md. B3 is the
+frozen specimen. B4-B6 rows still encode docs/research-plan.md Sec. 5, not an
+implementation. If an implemented baseline turns out to differ, the fix is to
+update this table together with a docs/decision-log.md entry, not to relax
+the validator ad hoc.
 """
 
 from __future__ import annotations
@@ -48,20 +50,21 @@ _TABLE: Dict[str, BaselineCapabilities] = {
     "B0": BaselineCapabilities(
         "B0", False, False, False, False, False,
         "Sender-funded fresh stealth EOA; plain transaction, no account "
-        "abstraction and no sponsor.",
-        implemented_in_repo=False,
+        "abstraction and no sponsor (baselines/w1_b0_b2).",
+        implemented_in_repo=True,
     ),
     "B1": BaselineCapabilities(
         "B1", True, True, False, False, False,
-        "Sender-funded ERC-4337 smart account; same application action as B0, "
-        "self-funded native balance, no Paymaster.",
-        implemented_in_repo=False,
+        "Sender-funded ERC-4337 smart account (eth-infinitism SimpleAccount "
+        "v0.9.0); same application action as B0, sender-supplied native "
+        "prefund, no Paymaster (baselines/w1_b0_b2).",
+        implemented_in_repo=True,
     ),
     "B2": BaselineCapabilities(
         "B2", True, True, True, False, False,
-        "Ordinary, fully observable Paymaster sponsoring the same operation as "
-        "B1 with no privacy mechanism.",
-        implemented_in_repo=False,
+        "Ordinary, fully observable allowlist Paymaster sponsoring the same "
+        "operation as B1 with no privacy mechanism (baselines/w1_b0_b2).",
+        implemented_in_repo=True,
     ),
     "B3": BaselineCapabilities(
         "B3", True, True, True, True, True,

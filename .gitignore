@@ -23,6 +23,27 @@ figures/*
 *.log
 env-report-*.txt
 
+# --- Generated public run data (policy changed 2026-09-14) -----------------
+# Recorder output under data/public/ is regenerable from data/raw/ + the
+# private seed (docs/experiment-schema.md), so generated runs are ignored by
+# default, exactly like data/raw/ and results/. A generated run is published
+# only by an explicit, reviewed decision (and never before
+# `make recorder-selfcheck` passes) -- not by a stray `git add -A`.
+# Still committable: the placeholder files, and the tiny SYNTHETIC recorder
+# examples (`*-example/`, run_id prefixed `synthetic-`) that document the
+# schema. Schema definitions and fixture generators live under experiments/
+# and are unaffected.
+data/public/**
+!data/public/.gitkeep
+!data/public/README.md
+!data/public/baselines/
+!data/public/baselines/*-example/
+!data/public/baselines/*-example/**
+# Foundry build output of the W1 baselines (the generic out/ and cache/
+# patterns below already cover it; listed for clarity).
+baselines/w1_b0_b2/out/
+baselines/w1_b0_b2/cache/
+
 # --- Secrets / environment --------------------------------------------------
 .env
 .env.*

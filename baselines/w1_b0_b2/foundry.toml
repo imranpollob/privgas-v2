@@ -1,0 +1,28 @@
+# Shared Foundry project for the matched W1 baselines B0, B1 and B2.
+#
+# Compiler settings are identical to the frozen B3 specimen
+# (baselines/b3_privgas_v1/foundry.toml) so that the EntryPoint and
+# SimpleAccount bytecode used here is compiled exactly as B3 compiles it.
+#
+# Dependencies are NOT vendored a second time. The remappings point read-only
+# into B3's vendored tree, which docs/b3-reproduction.md verified to be
+# byte-identical to eth-infinitism/account-abstraction commit
+# b36a1ed52ae00da6f8a4c8d50181e2877e4fa410 (tag v0.9.0). The digest of that
+# tree is pinned in dependency-pin.json and checked by
+# experiments/workloads/w1/tests (test_dependency_pin).
+[profile.default]
+src = "src"
+out = "out"
+libs = []
+test = "test"
+solc = "0.8.28"
+via_ir = true
+optimizer = true
+optimizer_runs = 200
+allow_paths = ["../b3_privgas_v1"]
+fs_permissions = [{ access = "read", path = "./w1-config.json" }]
+
+# Lints are advisory here; the compile-only import file intentionally has
+# "unused" imports, and a lint must never block building a baseline.
+[lint]
+lint_on_build = false

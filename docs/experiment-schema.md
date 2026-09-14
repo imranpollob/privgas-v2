@@ -140,7 +140,14 @@ frozen prediction can refer to.
   integers. A string `chain_id` is rejected: mixed representations break
   cross-run joins.
 - **32-byte hashes and field elements** are `0x`-prefixed lowercase hex of
-  exactly 32 bytes. Addresses are `0x`-prefixed 20-byte hex.
+  exactly 32 bytes. **Addresses are `0x`-prefixed lowercase 20-byte hex**
+  (2.0.0; adapters canonicalise). 1.0.0 accepted EIP-55 checksummed and
+  lowercase spellings side by side, and the first real runs produced both —
+  RPC transaction fields are lowercase, decoded logs checksummed — so the same
+  account compared unequal across rows.
+- **Fractional seconds** in timestamps (1–6 digits) are valid. (A 1.0.0
+  validator bug rejected them despite the documented pattern; found by the
+  first real bundler timestamps and fixed with a regression test.)
 - **Timestamps** are ISO-8601 UTC with a trailing `Z`. Offsets and local time
   are rejected. `block_timestamp_utc` is chain time; `recorded_at_utc` is the
   harness wall clock; they are never conflated.
@@ -171,7 +178,13 @@ whose identity we failed to record.
 Nothing is dropped for being a negative result:
 
 - A UserOperation that was never included is recorded in `public_events` with
-  `outcome: "not_included"` and every inclusion field `null`.
+  `outcome: "not_included"` and every inclusion field `null` **only if a
+  public observer could actually see it** — i.e. it was exposed by a public
+  UserOperation mempool or RPC (tier A1). An operation submitted to a private
+  bundler and never included was seen by no A0/A1 observer and appears only
+  in `bundler_private`. (Corrected in 2.0.0: the 1.0.0 fixtures recorded a
+  public row for a privately rejected operation; the real B2 runs showed no
+  such observation exists.)
 - A rejected operation is recorded in `bundler_private` with its
   `rejection_category`; the rejection-reason distribution is a reported
   liveness metric (`docs/research-plan.md` §9.3).
@@ -227,6 +240,11 @@ the full raw text of `scripts/env-report.sh`, `seed_commitment_sha256`,
 
 Tool versions come from `scripts/env-report.sh` — the repository's existing
 single source of version truth — not from a competing implementation.
+
+`components` is not schema-validated. Measured W1 runs add `bundler`,
+`fee_policy`, `chain_environment`, `transfer_amount`, `matched_config_sha256`
+and deployed-bytecode digests (`experiments/workloads/w1/recording.py`);
+addresses inside it follow the lowercase rule.
 
 `run_manifest.private.json` carries the same run identity plus the **seed**.
 
@@ -332,6 +350,28 @@ ordinary public visibility of UserOperations. If a value needs an instrumented
 bundler it belongs in §7; if it answers a linkage question it belongs in §5.
 `observer_tier` is `"A0"` or `"A1"`; `"A2"` is rejected in this stream.
 
+**Tier of included UserOperations (corrected in 2.0.0).** Every field of an
+included UserOperation is in the mined `handleOps` calldata, and its outcome is
+in EntryPoint logs, so rows derived from mined data are `"A0"` —
+`docs/research-plan.md` §7 lists "on-chain UserOperations" under A0. `"A1"` is
+only for rows obtained from a public UserOperation mempool/RPC before or
+without inclusion. The 1.0.0 field tables and fixtures marked the ERC-4337
+fields and mined UserOperation rows A1. The in-repo bundler used by B1/B2
+exposes no public mempool, so current measured runs contain no A1 rows at all.
+
+**Row structure of a real W1 run** (`experiments/workloads/w1/recording.py`):
+one row per workflow transaction, classified from on-chain content only
+(`asset_transfer`, `native_transfer`, `paymaster_event`); a bundle transaction
+yields an `eoa_transaction` row with calldata class `entrypoint_handle_ops`
+(the bundle's own receipt gas), followed by one row per relevant log in log
+order: `account_deployment`, `entrypoint_deposit`, `asset_transfer`,
+`user_operation_event`. On a `user_operation_event` row `actual_gas_used` /
+`actual_gas_cost` are the EntryPoint's per-operation figures, which differ
+from the bundle transaction's receipt gas. EntryPoint v0.9.0 emits **no log**
+when it debits or refunds a deposit during `handleOps`; that movement is
+recoverable from `actual_gas_cost` (and archive state), not from an event, so
+no row is fabricated for it.
+
 Publicly visible privacy-protocol artefacts (`commitment`, `merkle_root`,
 `nullifier`, `pool_id`, `proof_metadata`) belong here when they are on chain.
 Recording them makes no claim that they are unlinkable — measuring that is the
@@ -362,7 +402,7 @@ code rather than frozen into the raw record.
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
 | `data_origin` | public | A0 | required | 'measured' for rows derived from an actual execution; 'synthetic_fixture' for hand-written examples and test data. Synthetic rows are confined to run_ids prefixed 'synthetic-'. |
 | `recorded_at_utc` | public | A0 | required | When the recorder wrote the row (harness wall clock). Distinct from block_timestamp_utc, which is chain time. |
-| `observer_tier` | public | A0 | required | Lowest adversary tier that could have obtained this row: 'A0' for pure ledger data, 'A1' where public UserOperation/mempool visibility was needed. 'A2' is rejected here -- bundler observations live in a separate stream and directory. |
+| `observer_tier` | public | A0 | required | Lowest adversary tier that could have obtained this row: 'A0' for anything derived from mined blocks, transactions, logs or archive state -- including included UserOperations, whose fields are all in the handleOps calldata; 'A1' only for rows obtained from a public UserOperation mempool/RPC. 'A2' is rejected here -- bundler observations live in a separate stream and directory. |
 | `chain_id` | public | A0 | required | EIP-155 chain id as a JSON integer. A string chain id is rejected: mixed representations break cross-run joins. |
 | `block_number` | public | A0 | `null` ok | Block containing the event; null if never included. |
 | `block_hash` | public | A0 | `null` ok | Block hash; null if never included. |
@@ -370,13 +410,14 @@ code rather than frozen into the raw record.
 | `transaction_index` | public | A0 | `null` ok | Position of the transaction within its block; part of the block-position signal in the D1 attack ladder. |
 | `log_index` | public | A0 | `null` ok | Position of the log within the block, where the row comes from a log. |
 | `transaction_hash` | public | A0 | `null` ok | Enclosing transaction hash; null if never included. |
-| `userop_hash` | public | A1 | `null` ok | EntryPoint UserOperation hash. Null for non-AA baselines and for rows that are not about a UserOperation. |
-| `entrypoint_address` | public | A1 | `null` ok | EntryPoint contract the operation targeted. |
-| `entrypoint_version` | public | A1 | `null` ok | EntryPoint semantic version, e.g. '0.9.0'. Recorded per row because gas accounting and the field set differ across versions. |
-| `factory` | public | A1 | `null` ok | Account factory from initCode, where the operation deployed the account. |
+| `userop_hash` | public | A0 | `null` ok | EntryPoint UserOperation hash. A0 once included (it is indexed in UserOperationEvent). Null for non-AA baselines and for rows that are not about a UserOperation. |
+| `entrypoint_address` | public | A0 | `null` ok | EntryPoint contract the operation targeted. |
+| `entrypoint_version` | public | A0 | `null` ok | EntryPoint semantic version, e.g. '0.9.0'. Recorded per row because gas accounting and the field set differ across versions. |
+| `factory` | public | A0 | `null` ok | Account factory from initCode, where the operation deployed the account. |
 | `sender` | public | A0 | `null` ok | The account the operation/transaction originates from. For an AA row this is the smart account, not the bundler EOA. |
 | `paymaster` | public | A0 | `null` ok | Sponsoring Paymaster. Null where the baseline has none -- for B1 this is null by construction, not merely unknown. |
 | `target` | public | A0 | `null` ok | Contract or account the application action addresses. |
+| `subject_account` | public | A0 | `null` ok | Account an on-chain event is about when it is neither the row's sender nor its target: the account named in a Paymaster allowlist log, or the account credited by an EntryPoint Deposited log. Added in 2.0.0 because an ordinary allowlist Paymaster publishes the sponsored account before the operation, and the 1.0.0 schema had nowhere to record it. |
 | `bundler_beneficiary` | public | A0 | `null` ok | Beneficiary address paid by the EntryPoint. Public on chain -- this is NOT bundler-private data. |
 | `method_selector` | public | A0 | `null` ok | 4-byte selector of the public call. |
 | `calldata_class` | public | A0 | `null` ok | Coarse class of the public calldata. A class rather than raw calldata so the field cannot become a dumping ground. |
@@ -386,15 +427,15 @@ code rather than frozen into the raw record.
 | `asset_amount` | public | A0 | `null` ok | Amount in base units as a decimal uint256 string. |
 | `asset_token_id` | public | A0 | `null` ok | ERC-721 token id as a decimal uint256 string. |
 | `amount_bucket` | public | A0 | `null` ok | Derived coarse bucket of asset_amount. Always null at recording time: bucketing is an analysis decision and is computed downstream so the boundaries are visible in the analysis code, not frozen into the raw record. |
-| `max_fee_per_gas` | public | A1 | `null` ok | UserOperation maxFeePerGas, wei, decimal string. |
-| `max_priority_fee_per_gas` | public | A1 | `null` ok | UserOperation maxPriorityFeePerGas, wei. |
-| `verification_gas_limit` | public | A1 | `null` ok | UserOperation verificationGasLimit. |
-| `call_gas_limit` | public | A1 | `null` ok | UserOperation callGasLimit. |
-| `pre_verification_gas` | public | A1 | `null` ok | UserOperation preVerificationGas. |
-| `paymaster_verification_gas_limit` | public | A1 | `null` ok | EntryPoint v0.7+ paymasterVerificationGasLimit. Null under v0.6, where paymasterAndData is not decomposed. |
-| `paymaster_post_op_gas_limit` | public | A1 | `null` ok | EntryPoint v0.7+ paymasterPostOpGasLimit. Null under v0.6. |
-| `actual_gas_used` | public | A0 | `null` ok | Gas actually consumed, as reported on chain. |
-| `actual_gas_cost` | public | A0 | `null` ok | Wei actually charged, as reported by UserOperationEvent where applicable. |
+| `max_fee_per_gas` | public | A0 | `null` ok | UserOperation maxFeePerGas, wei, decimal string. |
+| `max_priority_fee_per_gas` | public | A0 | `null` ok | UserOperation maxPriorityFeePerGas, wei. |
+| `verification_gas_limit` | public | A0 | `null` ok | UserOperation verificationGasLimit. |
+| `call_gas_limit` | public | A0 | `null` ok | UserOperation callGasLimit. |
+| `pre_verification_gas` | public | A0 | `null` ok | UserOperation preVerificationGas. |
+| `paymaster_verification_gas_limit` | public | A0 | `null` ok | EntryPoint v0.7+ paymasterVerificationGasLimit. Null under v0.6, where paymasterAndData is not decomposed. |
+| `paymaster_post_op_gas_limit` | public | A0 | `null` ok | EntryPoint v0.7+ paymasterPostOpGasLimit. Null under v0.6. |
+| `actual_gas_used` | public | A0 | `null` ok | Gas actually consumed. For a user_operation_event row this is UserOperationEvent.actualGasUsed (includes preVerificationGas and any unused-gas penalty) and differs from the enclosing bundle transaction's receipt gasUsed, which is recorded on the entrypoint_handle_ops row. |
+| `actual_gas_cost` | public | A0 | `null` ok | Wei actually charged. For a user_operation_event row this is UserOperationEvent.actualGasCost (a transfer from the payer's EntryPoint deposit to the beneficiary); for a transaction row it is gasUsed * effectiveGasPrice. |
 | `effective_gas_price` | public | A0 | `null` ok | Effective gas price of the enclosing transaction, wei. |
 | `success` | public | A0 | `null` ok | Execution result. Null where the operation was never included. A failed operation is kept, never dropped. |
 | `revert_reason_class` | public | A0 | `null` ok | Coarse class of the public revert reason. A class rather than the raw string, which can carry arbitrary content. |
@@ -440,9 +481,11 @@ Derived from `docs/research-plan.md` §5 and enforced by the validator
 A record that populates a field its baseline does not have is rejected. A B0
 row carrying a `userop_hash` fails, because a fabricated UserOperation would
 make B0 look like an account-abstraction baseline and would invent exactly the
-sponsorship metadata D1 exists to isolate. Rows for B4–B6 are reserved: the
-capability flags encode the plan, not an implementation, and B6's in
-particular must be confirmed against real code before use.
+sponsorship metadata D1 exists to isolate. The B0–B2 rows were confirmed
+against the real implementations (`baselines/w1_b0_b2`, 2026-09-14): all five
+flags held. Rows for B4–B6 are reserved: the capability flags encode the plan,
+not an implementation, and B6's in particular must be confirmed against real
+code before use.
 
 ---
 
@@ -461,6 +504,16 @@ The raw bundler error message is deliberately not recorded. Implementations
 embed addresses, calldata and internal state in error strings, which would
 move uncontrolled content into an attacker-readable stream;
 `rejection_message_class` records a coarse class instead.
+
+**Mined bundle hashes are public (corrected in 2.0.0).** The hash of a mined
+bundle transaction is on chain and is recorded in
+`public_events.transaction_hash`. What an instrumented bundler knows that no
+public observer does is the *pre-inclusion association*: that a given
+UserOperation was placed in a bundle transaction it signed and broadcast, when,
+and under which hash — including bundles later replaced or dropped. That is
+`bundle_submission_timestamp_utc` and `submitted_bundle_transaction_hash`.
+1.0.0 had a single `bundle_transaction_hash` field classified bundler-private,
+which wrongly made a public on-chain value look A2-only.
 
 <!-- BEGIN GENERATED: bundler_private -->
 
@@ -492,7 +545,8 @@ move uncontrolled content into an attacker-readable stream;
 | `replacement_lineage` | bundler_private | A2 | `null` ok | Ordered prior userop hashes this operation replaced. An empty list means 'observed, no replacement'; that is not the same as null, which would mean 'lineage not observed'. |
 | `replacement_count` | bundler_private | A2 | `null` ok | Length of replacement_lineage; kept as its own field because it is a reported liveness metric. |
 | `inclusion_timestamp_utc` | bundler_private | A2 | `null` ok | When the bundler observed the operation included on chain; null if it never was. |
-| `bundle_transaction_hash` | bundler_private | A2 | `null` ok | Hash of the bundle transaction the bundler submitted. Public once mined, but recorded here because the bundler knows it before anyone else does. |
+| `bundle_submission_timestamp_utc` | bundler_private | A2 | `null` ok | When the bundler broadcast the bundle transaction that carried this operation; null if it never submitted one. |
+| `submitted_bundle_transaction_hash` | bundler_private | A2 | `null` ok | The bundler's PRE-INCLUSION association between this operation and the bundle transaction it signed and broadcast; null if it never submitted one. The A2 knowledge is the association before mining (and for bundles that are later replaced or dropped). A MINED bundle transaction hash is public on chain and is recorded in public_events.transaction_hash; this field does not make it private. Replaces 1.0.0 'bundle_transaction_hash', which classified the mined hash as bundler-private. |
 | `rpc_endpoint_id` | bundler_private | A2 | `null` ok | Opaque identifier of the RPC endpoint used. Opaque, not a URL: URLs carry credentials and host identity. |
 
 <!-- END GENERATED: bundler_private -->
@@ -529,26 +583,40 @@ rejects the known private field names — `actor_id`, `established_wallet_id`,
 such as `label` and `true_value` — **at any nesting depth**, with an error
 that names the actual problem rather than "unknown field".
 
-### 8.2 Process-level: the two read packages are mutually unimportable
+### 8.2 The research boundary: what it rests on, and what is only defence in depth
 
-`experiments/attacker_view/` reads attacker-visible data. `experiments/labels/`
-reads secret ground truth. Importing either **claims that side of the boundary
-for the whole process**, and importing the other then raises
-`BoundaryViolation` — including via `importlib`, because claiming a side
-installs a `sys.meta_path` finder that refuses to resolve the opposite
-package. `experiments/recorder/` is neutral (it holds no data) and is
-importable from both.
+The separation between attacker-visible data and secret ground truth rests on
+four things. **It does not rest on the import hook described at the end of
+this section.**
 
-This is why the workflow is two *processes*, not two functions. It is a
-discipline mechanism, not a defence against a determined author of both
-scripts; what it does is make the honest workflow the path of least
-resistance and make a violation visible.
+1. **Distinct data paths.** Ground truth, the private manifest (seed) and the
+   role/cost files exist only under `data/private/` (gitignored). A0/A1 and A2
+   observations live in separate `observer_a0a1/` and `observer_a2/`
+   directories under `data/public/` (§3.1).
+2. **Distinct reader APIs.** Attack code reads through
+   `experiments.attacker_view` (`load_run` requires the observer tier to be
+   named explicitly and returns bundler rows only for A2). Evaluation reads
+   through `experiments.labels`. Neither API offers the other side's data.
+3. **An explicit attack/evaluation process boundary.** Predictions are frozen
+   with a sha256 by the attack process; evaluation runs as a separate process,
+   verifies the digest, and only then loads labels (§8.4).
+4. **Validation and path guards.** Strict schema allow-lists and the
+   private-key denylist at write time (§8.1); `attacker_view` refuses any path
+   under `data/private/` and any file named `ground_truth.jsonl` or
+   `run_manifest.private.json` wherever it has been moved to;
+   `load_public_manifest` refuses a manifest carrying a non-null `seed`; the
+   leakage self-check scans published output (§8.5).
 
-`attacker_view` additionally refuses any path under `data/private/`, and any
-file named `ground_truth.jsonl` or `run_manifest.private.json` wherever it has
-been moved to. `load_public_manifest` refuses a manifest carrying a non-null
-`seed`. `load_run` requires the observer tier to be named explicitly and
-returns bundler rows only for A2.
+**Defence in depth only — the import hook.** Importing `experiments.attacker_view`
+or `experiments.labels` claims that side for the whole Python process, and
+importing the other then raises `BoundaryViolation` (a `sys.meta_path` finder
+refuses to resolve the opposite package, including via `importlib`).
+`experiments/recorder/` is neutral and importable from both. The hook catches
+an accidental mixed import early and loudly. It is trivially bypassable
+(`open()`, editing `sys.meta_path`, a subprocess), so no claim in this
+repository may be argued from it; if it were deleted, items 1–4 would still
+hold. (Clarified 2026-09-14; the 1.0.0 text presented the hook as the primary
+process-level mechanism.)
 
 ### 8.3 The seed is secret
 
@@ -625,7 +693,25 @@ it as a privacy finding.
 
 ## 9. Schema versioning
 
-`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`1.0.0`**.
+`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`2.0.0`**.
+
+### 9.0 Change log
+
+- **`2.0.0`** (2026-09-14) — corrections forced by the first real B0/B1/B2
+  runs (`docs/w1-baselines.md` §7, `docs/decision-log.md`). MAJOR because:
+  `bundler_private.bundle_transaction_hash` removed and replaced by
+  `submitted_bundle_transaction_hash` + `bundle_submission_timestamp_utc`
+  (the mined hash is public); the address rule narrowed to lowercase; tier
+  annotations of the ERC-4337 fields changed from A1 to A0 for included
+  operations. Additive parts: `public_events.subject_account`; event type
+  `entrypoint_deposit`; calldata classes `entrypoint_handle_ops` and
+  `paymaster_policy`; rejection category `paymaster_validation_revert`; a
+  rule that a rejected operation carries no bundle association. Also a
+  validator bug fix (fractional-second timestamps). No measured data existed
+  under 1.0.0; the synthetic examples were regenerated, not rewritten in
+  place, and 1.0.0 rows are not readable by 2.0.0 code.
+- **`1.0.0`** (2026-09-14) — initial recorder schema, written before any real
+  baseline existed.
 
 | Bump | For | Effect on readers |
 |------|-----|-------------------|
@@ -663,24 +749,28 @@ ways, all deliberate:
 5. Several fields are added that §10 does not list — the shared envelope
    (§3.2), `observer_tier`, `entrypoint_address`/`entrypoint_version`,
    `factory`, the two paymaster gas limits, `bundler_beneficiary`,
-   `revert_reason_class`, `submission_attempt`, `bundle_transaction_hash`.
+   `revert_reason_class`, `submission_attempt`,
+   `submitted_bundle_transaction_hash`, `bundle_submission_timestamp_utc`,
+   `subject_account`.
 
 ---
 
 ## 10. Known limitations
 
 1. **The self-check is not a privacy proof** — §8.6.
-2. **The boundary is not a sandbox.** `experiments/_boundary.py` stops
-   accidental and casual access. It does not stop a script that reads
-   `data/private/` with plain `open()`, and it is not designed to.
+2. **The boundary is not a sandbox.** It rests on separate paths, separate
+   reader APIs, the frozen-predictions process boundary and path guards
+   (§8.2). None of these stops a script that reads `data/private/` with plain
+   `open()`, and the import hook in `experiments/_boundary.py` is defence in
+   depth only.
 3. **The seed commitment is binding, not hiding** — §8.3.
-4. **B0–B2 are not implemented.** At the time this schema was written
-   `baselines/` contained only `b3_privgas_v1` (`docs/baseline-spec.md`
-   registry). The B0/B1/B2 example runs under
-   `experiments/recorder/examples/` are **synthetic fixtures**, marked
-   `data_origin: "synthetic_fixture"` with `synthetic-` run_ids. They
-   demonstrate and test the recorder; they are not measurements and no number
-   in them is real.
+4. **Synthetic examples are not measurements.** Real B0–B2 exist
+   (`baselines/w1_b0_b2`, runner `experiments/workloads/w1`) and record
+   `data_origin: "measured"`. The example runs under
+   `experiments/recorder/examples/` remain **synthetic fixtures**, marked
+   `data_origin: "synthetic_fixture"` with `synthetic-` run_ids; they were
+   first written before the baselines existed and were revised to the real
+   event structure in 2.0.0. No number in them is real.
 5. **Baseline capability flags for B4–B6 encode a plan, not code.** They must
    be confirmed against a real implementation before those baselines record
    anything. B6's flags are explicitly provisional.
@@ -689,11 +779,16 @@ ways, all deliberate:
    (`docs/research-plan.md` §5, §9.4) are per-run measurements produced by
    each baseline runner, not events. The recorder deliberately has no single
    aggregate "cost" field.
-7. **`data/public/` is not gitignored.** Public observations are the
-   publishable artefact under the repository's existing policy
-   (`docs/decision-log.md`, 2026-09-13), but generated run directories are
-   regenerable and should not be committed casually — and never before §8.5
-   passes.
+7. **Generated `data/public/` runs are gitignored** (policy changed
+   2026-09-14, `docs/decision-log.md`). They are regenerable from `data/raw/`
+   plus the private seed. Only the tiny synthetic `*-example/` runs, schema
+   code and fixture generators are committable by default; publishing a
+   measured run is an explicit decision, never taken before §8.5 passes.
 8. **`entrypoint_version` is recorded, not validated against the chain.** The
    recorder trusts the runner's value; nothing here checks it against the
-   deployed EntryPoint.
+   deployed EntryPoint. (The W1 runner pins it through
+   `baselines/w1_b0_b2/dependency-pin.json` and records deployed-bytecode
+   digests in the manifest.)
+9. **No A1 data exists yet.** The in-repo bundler has no public mempool, so no
+   measured run contains pre-inclusion public UserOperation observations,
+   replacement behaviour or fee changes.

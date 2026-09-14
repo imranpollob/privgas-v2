@@ -241,3 +241,133 @@ Format for each entry:
 - **Alternatives considered**: a fourth top-level `data/bundler/` root —
   rejected to stay within the `raw/public/private` policy established in
   Prompt 0.
+
+## 2026-09-14: State correction — the recorder (Prompt 3) was built before the baselines (Prompt 2)
+
+- **Decision**: Implemented real B0/B1/B2 after the fact and re-validated the
+  recorder against them, instead of treating the Prompt-3 synthetic fixtures
+  as a description of the baselines. The fixtures stay fixtures
+  (`data_origin: "synthetic_fixture"`); every assumption the real runs
+  contradicted is listed in `docs/w1-baselines.md` §7 and was corrected
+  explicitly (schema 2.0.0 entry below), not silently.
+- **Why**: the fixtures encoded guesses about event structure that no chain
+  had produced. Measurements must drive the schema, not the reverse.
+
+## 2026-09-14: B0/B1/B2 architecture choices
+
+- **Decision**:
+  1. **One shared Foundry project** `baselines/w1_b0_b2/` and one parameter
+     file `w1-config.json` read by both the Forge tests and the live runner.
+  2. **EntryPoint v0.9.0 at `b36a1ed52ae00da6f8a4c8d50181e2877e4fa410`**, the
+     exact commit B3 vendors, compiled with B3's compiler settings. Sources are
+     reached by read-only remappings into `baselines/b3_privgas_v1/lib/`
+     rather than vendored a second time or fetched with git; tree digests are
+     pinned in `dependency-pin.json` and tested.
+  3. **Account: unmodified eth-infinitism `SimpleAccount` + `SimpleAccountFactory`
+     from that same commit**, for both B1 and B2. It is the reference account
+     of the pinned EntryPoint release and needs no new code. (B3's own tests use
+     a `MockSimpleAccount`; B3 comparisons will therefore differ in account
+     code, which is recorded.)
+  4. **B2 authorization = owner-managed public allowlist**
+     (`sponsored[userOp.sender]`). A signature-verifying Paymaster was not
+     chosen because it requires designing a sponsor-signature domain, which
+     `docs/research-plan.md` §18 reserves for human review.
+  5. **In-repo instrumented bundler** (`experiments/workloads/w1/bundler.py`)
+     shared by B1/B2: simulation by `eth_call handleOps`, no ERC-7562, no public
+     mempool. Required for A2 data from a bundler we operate.
+  6. **Real signed transactions only** in the live runner (`eth_sendRawTransaction`
+     from locally held seed-derived keys; no impersonation, no unlocked
+     accounts). Forge tests use `vm.prank` for semantics only; no cost number
+     comes from Forge.
+  7. **Base fee pinned** to 1 gwei before every block
+     (`anvil_setNextBlockBaseFeePerGas`), priority 1 gwei, max fee 2 gwei.
+     Without it anvil's base fee decays per block and baselines with different
+     block counts would pay different prices.
+  8. **Identical setup phase** (funding, all four deployments, Paymaster
+     deposit) in every baseline, so addresses and state match; setup is
+     environment, not W1 cost, and is not recorded as events.
+  9. **Raw-first recording**: role-free chain dump and bundler log under
+     `data/raw/`; role assignment and the role-labelled cost reconciliation
+     under `data/private/`; public streams are derived from the raw dump by
+     classifying on-chain content only, and regenerate byte-identically.
+- **Why**: each choice removes a way for B0/B1/B2 to differ in something other
+  than account type and gas mechanism, or avoids an AI-designed security
+  construct.
+- **Alternatives considered**: an external bundler (Alto/Rundler/eth-infinitism
+  bundler) — rejected for now: v0.9.0 support, network installs and log access
+  were unverified, and A2 instrumentation would be indirect. Per-baseline
+  directories per `research-plan.md` §16 — rejected (drift risk). Pre-deploying
+  the account outside the measured operation — not done; recorded as fairness
+  difference 1 in `docs/w1-baselines.md` §10.
+- **Open questions for the user**: (a) allowlist vs. verifying-signature
+  Paymaster for B2 — the allowlist publishes the sponsored account on chain
+  before the operation, which will matter to D1; (b) whether preVerificationGas
+  should be calibrated to cover the bundle overhead (the fixed 50,000
+  under-compensates the bundler by ~18k gas per operation); (c) whether account
+  deployment should be separated from the measured action.
+
+## 2026-09-14: UserOperation gas limits calibrated before any reported result
+
+- **Decision**: `verification_gas_limit` 300,000 and `call_gas_limit` 60,000
+  for both B1 and B2 (initially 400,000 / 80,000).
+- **Why**: calibration runs showed (i) with `callGasLimit` 80,000 EntryPoint
+  v0.9.0 charged its 10% unused-execution-gas penalty (4,601 gas) in both B1
+  and B2 — execution uses ~34k gas and the penalty applies once unused gas
+  exceeds 40,000; (ii) B1 validation (deploy + signature + prefund payment)
+  needs between 200,000 and 250,000 gas (fails `AA26` at 200,000), B2's fits
+  within 200,000. 300,000 is one shared value with margin; 60,000 avoids the
+  penalty. A live test asserts that lowering the call limit by 10,000 does not
+  change `actualGasUsed`. The earlier runs with the old limits were deleted
+  before any result was reported (they were this session's own output).
+- **Alternatives considered**: per-baseline limits sized to each baseline's
+  need — rejected: identical limits are part of the B1/B2 match.
+
+## 2026-09-14: Schema 2.0.0 — corrections forced by the first real runs
+
+- **Decision**: bump the recorder schema to `2.0.0` (MAJOR), with:
+  `bundler_private.bundle_transaction_hash` replaced by
+  `submitted_bundle_transaction_hash` + `bundle_submission_timestamp_utc`
+  (a mined bundle hash is public; only the bundler's pre-inclusion association
+  is A2); lowercase-only addresses; ERC-4337 field tier annotations A1 → A0 for
+  included operations; additive `public_events.subject_account`, event type
+  `entrypoint_deposit`, calldata classes `entrypoint_handle_ops` and
+  `paymaster_policy`, rejection category `paymaster_validation_revert`; §3.5
+  of the schema doc corrected (a `not_included` public row only when a public
+  observer saw the operation); a validator bug fixed (fractional-second
+  timestamps were rejected). Synthetic examples regenerated under 2.0.0 with
+  their corrections annotated in `w1_fixtures.py`.
+- **Why**: each item was contradicted by real B0/B1/B2 behaviour
+  (`docs/w1-baselines.md` §7). No measured 1.0.0 data ever existed, so the bump
+  strands nothing real; 1.0.0 is removed from `SUPPORTED_SCHEMA_VERSIONS`.
+- **Alternatives considered**: keeping `bundle_transaction_hash` and only
+  editing its description — rejected: that changes a field's meaning under the
+  same name, which §9 forbids.
+
+## 2026-09-14: The research boundary does not rely on the import hook
+
+- **Decision**: documentation (`docs/experiment-schema.md` §8.2,
+  `experiments/_boundary.py`, `experiments/README.md`) now states that the
+  public/private separation rests on distinct data paths, distinct reader
+  APIs, the frozen-predictions attack/evaluation process boundary, and
+  validation/path guards. The `sys.meta_path` mutual-exclusion hook remains as
+  defence in depth only. Code behaviour is unchanged.
+- **Why**: the hook is trivially bypassable; presenting it as the primary
+  mechanism overstated what is enforced. This refines, and does not reverse,
+  the earlier entry "Public/private data separation is a process boundary, not
+  a convention".
+
+## 2026-09-14: Generated `data/public/` runs are gitignored by default
+
+- **Decision**: `.gitignore` now ignores `data/public/**` except `.gitkeep`,
+  `README.md` and the synthetic `data/public/baselines/*-example/` runs.
+  Schema code and fixture generators under `experiments/` are unaffected.
+  `make scaffold-test` checks both directions.
+- **Why**: recorder output is regenerable from `data/raw/` plus the secret
+  seed, like `data/raw/` and `results/`, and a measured run should be published
+  only by an explicit reviewed decision after the leakage self-check. This
+  revises the 2026-09-13 policy under which public observations were
+  committable by default.
+- **Existing data**: nothing was deleted by the policy change. The nine staged
+  synthetic example files under `data/public/baselines/*-example/` remain
+  committable and were regenerated in 2.0.0 form (their content changed). The
+  measured runs under `data/public/baselines/b{0,1,2}-w1/` are ignored.

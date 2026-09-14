@@ -120,7 +120,9 @@ class TestMalformedValues(RejectionTestCase):
                             code="malformed_hash")
 
     def test_h_unsupported_schema_version(self):
-        for bad in ("0.9", "1.0", "2.0.0", "", None, 1.0):
+        # "1.0.0" is the superseded pre-baseline version: its rows are not
+        # readable by 2.0.0 code (docs/experiment-schema.md Sec. 9).
+        for bad in ("0.9", "1.0", "1.0.0", "3.0.0", "", None, 1.0):
             with self.subTest(bad=bad):
                 self.assertRejected("public_events",
                                     F.public_event(schema_version=bad),
@@ -140,6 +142,17 @@ class TestMalformedValues(RejectionTestCase):
                     "public_events",
                     F.public_event(block_timestamp_utc=bad),
                     code="invalid_timestamp")
+
+    def test_fractional_second_timestamps_are_accepted(self):
+        """Regression: RE_ISO_UTC allows 1-6 fractional digits, and real
+        bundler timestamps use them; the calendar check must agree."""
+        for good in ("2026-03-01T12:20:00.5Z", "2026-03-01T12:20:00.123456Z"):
+            with self.subTest(good=good):
+                validate_record("public_events",
+                                F.public_event(block_timestamp_utc=good))
+        self.assertRejected("public_events",
+                            F.public_event(block_timestamp_utc="2026-02-30T12:20:00.1Z"),
+                            code="invalid_timestamp")
 
     def test_uint256_values_must_be_decimal_strings(self):
         self.assertRejected("public_events",
@@ -338,8 +351,43 @@ class TestCrossFieldConsistency(RejectionTestCase):
         row = F.bundler_private(
             simulation_result="rejected", rejection_category="stale_root",
             rejection_message_class="entrypoint_revert",
-            inclusion_timestamp_utc=None, bundle_transaction_hash=None)
+            inclusion_timestamp_utc=None, bundle_submission_timestamp_utc=None,
+            submitted_bundle_transaction_hash=None)
         validate_record("bundler_private", row)
+
+    def test_rejected_operation_cannot_carry_a_bundle_association(self):
+        row = F.bundler_private(
+            simulation_result="rejected",
+            rejection_category="paymaster_validation_revert",
+            rejection_message_class="entrypoint_revert",
+            inclusion_timestamp_utc=None, bundle_submission_timestamp_utc=None)
+        self.assertRejected("bundler_private", row,
+                            code="rejection_inconsistent")
+
+    def test_paymaster_validation_revert_is_its_own_category(self):
+        row = F.bundler_private(
+            simulation_result="rejected",
+            rejection_category="paymaster_validation_revert",
+            rejection_message_class="entrypoint_revert",
+            inclusion_timestamp_utc=None, bundle_submission_timestamp_utc=None,
+            submitted_bundle_transaction_hash=None)
+        validate_record("bundler_private", row)
+
+    def test_mined_bundle_hash_is_not_a_bundler_private_field(self):
+        """Schema 2.0.0: the mined hash is public; only the pre-inclusion
+        association is A2."""
+        row = F.bundler_private()
+        row["bundle_transaction_hash"] = row.pop(
+            "submitted_bundle_transaction_hash")
+        self.assertRejected("bundler_private", row, code="unknown_field")
+
+    def test_allowlist_event_records_its_subject_account(self):
+        row = F.public_event(
+            baseline_id="B2", event_type="paymaster_event",
+            calldata_class="paymaster_policy", asset_type="none",
+            asset_contract=None, asset_amount=None, method_selector="0xf935d0b0",
+            target=F.PAYMASTER, paymaster=F.PAYMASTER, subject_account=F.ADDRESS)
+        validate_record("public_events", row)
 
     def test_replacement_count_must_match_the_lineage(self):
         row = F.bundler_private(replacement_lineage=[F.HASH_C],

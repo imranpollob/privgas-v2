@@ -20,6 +20,16 @@ The B3 specimen vendored in this repository pins
 EntryPoint v0.6 run the two paymaster gas limits do not exist as separate
 fields; record them as null and record the actual version in
 ``entrypoint_version`` rather than inventing a decomposition.
+
+Tier note (corrected in 2.0.0): a UserOperation that has been *included* is
+fully recoverable by an A0 archive-node observer -- every UserOperation field
+is in the mined ``handleOps`` calldata and the outcome is in EntryPoint logs
+(docs/research-plan.md Sec. 7 lists "on-chain UserOperations" under A0).
+Rows derived from mined data are therefore ``observer_tier: "A0"``. ``"A1"``
+is only for rows obtained from a *public* UserOperation mempool / RPC before
+or without inclusion. A UserOperation submitted to a private bundler and
+never included is not public at all and belongs only in
+``bundler_private.jsonl``.
 """
 
 from __future__ import annotations
@@ -58,7 +68,8 @@ EVENT_TYPES = (
     "account_deployment",       # smart account / factory deployment
     "user_operation_event",     # EntryPoint UserOperationEvent
     "user_operation_revert",    # EntryPoint UserOperationRevertReason
-    "paymaster_event",          # deposit/withdraw/stake movement of a paymaster
+    "paymaster_event",          # paymaster-emitted log (e.g. allowlist change) or its stake/withdraw
+    "entrypoint_deposit",       # EntryPoint Deposited log: an account's or paymaster's deposit credited
     "privacy_pool_event",       # commitment insert / root update / nullifier use
 )
 
@@ -68,6 +79,8 @@ CALLDATA_CLASSES = (
     "erc721_transfer",
     "native_value_only",
     "account_execute",
+    "entrypoint_handle_ops",    # the bundle transaction itself: EntryPoint.handleOps
+    "paymaster_policy",         # a paymaster configuration call, e.g. setSponsored
     "account_deploy",
     "paymaster_deposit",
     "pool_deposit",
@@ -262,10 +275,12 @@ SCHEMA = StreamSchema(
     fields=envelope_fields(scenario_nullable=True) + (
         FieldSpec("observer_tier", _check_observer_tier, CLASS_PUBLIC, "A0",
                   "Lowest adversary tier that could have obtained this row: "
-                  "'A0' for pure ledger data, 'A1' where public "
-                  "UserOperation/mempool visibility was needed. 'A2' is "
-                  "rejected here -- bundler observations live in a separate "
-                  "stream and directory."),
+                  "'A0' for anything derived from mined blocks, transactions, "
+                  "logs or archive state -- including included UserOperations, "
+                  "whose fields are all in the handleOps calldata; 'A1' only "
+                  "for rows obtained from a public UserOperation mempool/RPC. "
+                  "'A2' is rejected here -- bundler observations live in a "
+                  "separate stream and directory."),
         # --- chain / block ---------------------------------------------------
         FieldSpec("chain_id", _check_chain_id_field, CLASS_PUBLIC, "A0",
                   "EIP-155 chain id as a JSON integer. A string chain id is "
@@ -289,18 +304,19 @@ SCHEMA = StreamSchema(
                   "Enclosing transaction hash; null if never included.",
                   nullable=True),
         # --- ERC-4337 identity ----------------------------------------------
-        FieldSpec("userop_hash", check_hash32, CLASS_PUBLIC, "A1",
-                  "EntryPoint UserOperation hash. Null for non-AA baselines "
+        FieldSpec("userop_hash", check_hash32, CLASS_PUBLIC, "A0",
+                  "EntryPoint UserOperation hash. A0 once included (it is "
+                  "indexed in UserOperationEvent). Null for non-AA baselines "
                   "and for rows that are not about a UserOperation.",
                   nullable=True),
-        FieldSpec("entrypoint_address", check_address, CLASS_PUBLIC, "A1",
+        FieldSpec("entrypoint_address", check_address, CLASS_PUBLIC, "A0",
                   "EntryPoint contract the operation targeted.", nullable=True),
         FieldSpec("entrypoint_version", _check_entrypoint_version, CLASS_PUBLIC,
-                  "A1",
+                  "A0",
                   "EntryPoint semantic version, e.g. '0.9.0'. Recorded per row "
                   "because gas accounting and the field set differ across "
                   "versions.", nullable=True),
-        FieldSpec("factory", check_address, CLASS_PUBLIC, "A1",
+        FieldSpec("factory", check_address, CLASS_PUBLIC, "A0",
                   "Account factory from initCode, where the operation deployed "
                   "the account.", nullable=True),
         # --- addresses -------------------------------------------------------
@@ -315,6 +331,14 @@ SCHEMA = StreamSchema(
         FieldSpec("target", check_address, CLASS_PUBLIC, "A0",
                   "Contract or account the application action addresses.",
                   nullable=True),
+        FieldSpec("subject_account", check_address, CLASS_PUBLIC, "A0",
+                  "Account an on-chain event is about when it is neither the "
+                  "row's sender nor its target: the account named in a "
+                  "Paymaster allowlist log, or the account credited by an "
+                  "EntryPoint Deposited log. Added in 2.0.0 because an "
+                  "ordinary allowlist Paymaster publishes the sponsored "
+                  "account before the operation, and the 1.0.0 schema had "
+                  "nowhere to record it.", nullable=True),
         FieldSpec("bundler_beneficiary", check_address, CLASS_PUBLIC, "A0",
                   "Beneficiary address paid by the EntryPoint. Public on "
                   "chain -- this is NOT bundler-private data.", nullable=True),
@@ -350,33 +374,39 @@ SCHEMA = StreamSchema(
                   options={"pattern": RE_SCENARIO_ID,
                            "code": "malformed_amount_bucket", "max_len": 64}),
         # --- fee / gas -------------------------------------------------------
-        FieldSpec("max_fee_per_gas", check_uint256_string, CLASS_PUBLIC, "A1",
+        FieldSpec("max_fee_per_gas", check_uint256_string, CLASS_PUBLIC, "A0",
                   "UserOperation maxFeePerGas, wei, decimal string.",
                   nullable=True),
         FieldSpec("max_priority_fee_per_gas", check_uint256_string, CLASS_PUBLIC,
-                  "A1", "UserOperation maxPriorityFeePerGas, wei.",
+                  "A0", "UserOperation maxPriorityFeePerGas, wei.",
                   nullable=True),
         FieldSpec("verification_gas_limit", check_uint256_string, CLASS_PUBLIC,
-                  "A1", "UserOperation verificationGasLimit.", nullable=True),
-        FieldSpec("call_gas_limit", check_uint256_string, CLASS_PUBLIC, "A1",
+                  "A0", "UserOperation verificationGasLimit.", nullable=True),
+        FieldSpec("call_gas_limit", check_uint256_string, CLASS_PUBLIC, "A0",
                   "UserOperation callGasLimit.", nullable=True),
         FieldSpec("pre_verification_gas", check_uint256_string, CLASS_PUBLIC,
-                  "A1", "UserOperation preVerificationGas.", nullable=True),
+                  "A0", "UserOperation preVerificationGas.", nullable=True),
         FieldSpec("paymaster_verification_gas_limit", check_uint256_string,
-                  CLASS_PUBLIC, "A1",
+                  CLASS_PUBLIC, "A0",
                   "EntryPoint v0.7+ paymasterVerificationGasLimit. Null under "
                   "v0.6, where paymasterAndData is not decomposed.",
                   nullable=True),
         FieldSpec("paymaster_post_op_gas_limit", check_uint256_string,
-                  CLASS_PUBLIC, "A1",
+                  CLASS_PUBLIC, "A0",
                   "EntryPoint v0.7+ paymasterPostOpGasLimit. Null under v0.6.",
                   nullable=True),
         # --- execution result -------------------------------------------------
         FieldSpec("actual_gas_used", check_uint256_string, CLASS_PUBLIC, "A0",
-                  "Gas actually consumed, as reported on chain.", nullable=True),
+                  "Gas actually consumed. For a user_operation_event row this "
+                  "is UserOperationEvent.actualGasUsed (includes "
+                  "preVerificationGas and any unused-gas penalty) and differs "
+                  "from the enclosing bundle transaction's receipt gasUsed, "
+                  "which is recorded on the entrypoint_handle_ops row.", nullable=True),
         FieldSpec("actual_gas_cost", check_uint256_string, CLASS_PUBLIC, "A0",
-                  "Wei actually charged, as reported by UserOperationEvent "
-                  "where applicable.", nullable=True),
+                  "Wei actually charged. For a user_operation_event row this is "
+                  "UserOperationEvent.actualGasCost (a transfer from the payer's "
+                  "EntryPoint deposit to the beneficiary); for a transaction "
+                  "row it is gasUsed * effectiveGasPrice.", nullable=True),
         FieldSpec("effective_gas_price", check_uint256_string, CLASS_PUBLIC,
                   "A0", "Effective gas price of the enclosing transaction, wei.",
                   nullable=True),

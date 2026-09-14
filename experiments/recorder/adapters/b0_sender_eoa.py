@@ -20,9 +20,10 @@ comparison:
 
 Fairness accounting (ETH supplied vs. ETH retained vs. gas actually consumed,
 docs/research-plan.md Sec. 5) is a per-run cost measurement, not an event
-stream. It belongs in the baseline runner's own output under ``data/raw/``
-and in the run manifest's ``components``/``notes``; the recorder does not
-aggregate costs and deliberately has no single "cost" field.
+stream. The W1 runner writes it, role-labelled and therefore secret, to
+``data/private/<experiment>/<run>/w1_cost_reconciliation.json``
+(experiments/workloads/w1/accounting.py); the recorder does not aggregate
+costs and deliberately has no single "cost" field.
 """
 
 from __future__ import annotations

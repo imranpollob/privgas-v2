@@ -1,6 +1,6 @@
 # Baseline specification
 
-Status: **placeholder — defines the concept and process; no baselines implemented yet.**
+Status: **B0, B1, B2 implemented (2026-09-14, `docs/w1-baselines.md`); B3 frozen specimen; B4–B6 not implemented.**
 
 `baselines/` holds reference implementations that experiments compare
 against — e.g., an unmodified/standard flow with no privacy or gas
@@ -29,21 +29,34 @@ A baseline must:
 | ID | Directory | Represents | Added (commit) |
 |----|-----------|------------|-----------------|
 | B3 | `baselines/b3_privgas_v1` (git submodule, pinned `02a3f0ab...e43a3e`) | The accepted PrivGas v1 implementation, reproduced as faithfully as possible — evaluated as a specimen, not improved. See `docs/b3-reproduction.md` for test results, dependency/version provenance, and a documented ordinary-key deployment failure (PoseidonT3 exceeds EIP-170). | (this repo's next commit) |
-| B0-B2, B4-B6 | not yet implemented | Sender-funded EOA / sender-funded smart account / observable Paymaster / independent-issuance credit / prior-art prepaid Paymaster / shielded-pool reference — see `docs/research-plan.md` §5. | — |
+| B0 | `baselines/w1_b0_b2` (shared project) + runner `experiments/workloads/w1` | Sender-funded fresh EOA: the asset sender sends the ERC-20 and exactly the action transaction's max fee in ETH; the EOA performs the ERC-20 transfer. Tiers: A0. Honest: local node. | (uncommitted, 2026-09-14) |
+| B1 | same | Sender-funded eth-infinitism `SimpleAccount` v0.9.0 (EntryPoint v0.9.0, commit `b36a1ed5`): the sender sends the EntryPoint required prefund to the counterfactual account; the first UserOperation deploys it and executes the same transfer through the in-repo bundler; no Paymaster. Tiers: A0, A2 (no A1: no public mempool). Honest: node, bundler. | (uncommitted, 2026-09-14) |
+| B2 | same | Same account, EntryPoint, bundler and UserOperation as B1 plus `ObservablePaymaster`: authorization `sponsored[userOp.sender] == true` (owner-managed public allowlist). Recipient holds zero native ETH. Tiers: A0, A2. Honest: node, bundler, sponsor operator. | (uncommitted, 2026-09-14) |
+| B4-B6 | not yet implemented | Independent-issuance credit / prior-art prepaid Paymaster / shielded-pool reference — see `docs/research-plan.md` §5. | — |
 
-Recording infrastructure for B0-B2 exists ahead of the baselines themselves:
 `experiments/recorder/adapters/` holds one adapter per baseline and
 `experiments/recorder/baselines.py` declares each baseline's structural
 capabilities (does it use ERC-4337, a bundler, a Paymaster, a credit system,
-publishable privacy artefacts), which the record validator enforces. The
-capability rows for B0-B2 and B4-B6 encode `docs/research-plan.md` §5, **not**
-an observed implementation; when a baseline is actually built, any discrepancy
-is fixed in that table with a `docs/decision-log.md` entry, never by relaxing
-the validator. The example runs under `experiments/recorder/examples/` are
-synthetic fixtures for testing the recorder and are not measurements — see
-`docs/experiment-schema.md` §10.
+publishable privacy artefacts), which the record validator enforces. That
+recording infrastructure was built before B0-B2 existed; the B0-B2 capability
+rows were confirmed unchanged against the real implementations, while several
+event-structure assumptions were not and were corrected under schema 2.0.0
+(`docs/w1-baselines.md` §7). Rows for B4-B6 still encode
+`docs/research-plan.md` §5, not an implementation. The example runs under
+`experiments/recorder/examples/` are synthetic fixtures for testing the
+recorder and are not measurements — see `docs/experiment-schema.md` §10.
 
-## Directory convention (once baselines exist)
+B0-B2 deviate from criterion 1 above in one respect: they run through
+`make run-matched-baselines SEED=<seed>` (which records event streams and a
+cost reconciliation) rather than the metadata-only `make run-local-experiment`.
+
+## Directory convention
+
+B0-B2 share one directory, `baselines/w1_b0_b2/`, instead of the
+`b0_sender_eoa/`, `b1_sender_aa/`, `b2_public_paymaster/` split sketched in
+`docs/research-plan.md` §16: the comparison requires one token, one
+EntryPoint build, one account build and one parameter file, and three copies
+would be three chances to drift.
 
 ```
 baselines/<baseline-id>/

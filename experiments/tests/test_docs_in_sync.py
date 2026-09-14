@@ -57,7 +57,7 @@ class TestDocsInSync(unittest.TestCase):
     def test_known_limitations_are_stated(self):
         for phrase in (
             "not a privacy proof",
-            "B0–B2 are not implemented",
+            "Synthetic examples are not measurements",
             "binding, not hiding",
             "Cost accounting is not in the event schema",
         ):

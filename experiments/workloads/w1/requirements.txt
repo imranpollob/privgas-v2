@@ -1,0 +1,7 @@
+# Python dependencies of the W1 baseline runner (experiments/workloads/w1).
+# The recorder itself (experiments/recorder) remains stdlib-only.
+# Versions are the ones the 2026-09-14 measured runs used; every chain dump
+# also records the installed versions.
+eth-account==0.13.7
+eth-abi==5.2.0
+eth-utils==5.3.1

@@ -34,7 +34,7 @@ EXPERIMENT_ID = "tests/recorder-fixture"
 
 ADDRESS = "0x57ea1a0000000000000000000000000000000001"
 PAYMASTER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-ENTRYPOINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032"
+ENTRYPOINT = "0x0000000071727de22e5e9d8baf0edac6f37da032"
 TOKEN = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
 HASH_A = "0x" + "11" * 32
 HASH_B = "0x" + "22" * 32
@@ -78,6 +78,7 @@ def public_event(baseline_id: str = "B0", seq: int = 0, **overrides
         "sender": ADDRESS,
         "paymaster": None,
         "target": TOKEN,
+        "subject_account": None,
         "bundler_beneficiary": None,
         "method_selector": "0xa9059cbb",
         "calldata_class": "erc20_transfer",
@@ -115,7 +116,9 @@ def erc4337_public_event(baseline_id: str = "B1", seq: int = 0, **overrides
                          ) -> Dict[str, Any]:
     row = public_event(baseline_id=baseline_id, seq=seq)
     row.update({
-        "observer_tier": "A1",
+        # A0: an included UserOperation is recoverable from chain data alone
+        # (schema 2.0.0 correction; 1.0.0 fixtures used A1 here).
+        "observer_tier": "A0",
         "event_type": "user_operation_event",
         "asset_type": "none",
         "asset_contract": None,
@@ -163,7 +166,8 @@ def bundler_private(baseline_id: str = "B1", seq: int = 0, **overrides
         "replacement_lineage": [],
         "replacement_count": 0,
         "inclusion_timestamp_utc": "2026-03-01T12:20:02Z",
-        "bundle_transaction_hash": HASH_A,
+        "bundle_submission_timestamp_utc": "2026-03-01T12:19:12Z",
+        "submitted_bundle_transaction_hash": HASH_A,
         "rpc_endpoint_id": "local-anvil",
     })
     row.update(overrides)

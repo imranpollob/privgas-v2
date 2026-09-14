@@ -1,0 +1,45 @@
+{
+  "_comment": "Single source of truth for the matched W1 parameters of B0, B1 and B2. Read by the Foundry tests (test/W1Base.sol) and by the live runner (experiments/workloads/w1/config.py). wei/token values are decimal strings. Changing any value after a result is reported requires a docs/decision-log.md entry.",
+  "config_version": "1",
+  "chain_id": 31337,
+  "token": {
+    "name": "PrivGas W1 Token",
+    "symbol": "W1T",
+    "decimals": 18,
+    "supply": "1000000000000000000000000",
+    "transfer_amount": "100000000000000000000"
+  },
+  "fees": {
+    "_comment": "One fee policy for every transaction and every UserOperation in every baseline. The runner pins each block's base fee to base_fee_per_gas, so the effective price is min(max_fee, base_fee + priority) = 2 gwei everywhere.",
+    "base_fee_per_gas": "1000000000",
+    "max_priority_fee_per_gas": "1000000000",
+    "max_fee_per_gas": "2000000000"
+  },
+  "eoa_tx_gas_limits": {
+    "_comment": "Fixed (not estimated) gas limits for plain transactions. b0_action is the recipient EOA's ERC-20 transfer; the sender's ETH allowance for B0 is exactly b0_action * max_fee_per_gas.",
+    "native_transfer": "21000",
+    "erc20_transfer": "65000",
+    "b0_action": "65000",
+    "setup_call": "1000000",
+    "deployment": "8000000",
+    "bundle": "1000000"
+  },
+  "userop": {
+    "_comment": "Identical account-side limits for B1 and B2, fixed before any reported result from calibration runs on 2026-09-14 (docs/decision-log.md): B1 validation (deploy + signature + prefund payment) needs between 200k and 250k gas and B2 validation under 200k, so 300k is one shared value with margin; account execution uses ~34k gas, and 60k stays within EntryPoint v0.9.0 PENALTY_GAS_THRESHOLD (40k) so no 10% unused-execution-gas penalty is charged (80k incurred a 4,601-gas penalty in both B1 and B2). B2 additionally carries a paymaster verification limit; its postOp limit is 0 because ObservablePaymaster has no postOp. preVerificationGas is a fixed policy value of the in-repo bundler, not a calldata-cost estimate. B1's native funding is exactly the EntryPoint required prefund: (verification + call + preVerification) * max_fee_per_gas.",
+    "verification_gas_limit": "300000",
+    "call_gas_limit": "60000",
+    "pre_verification_gas": "50000",
+    "paymaster_verification_gas_limit": "60000",
+    "paymaster_post_op_gas_limit": "0",
+    "account_salt": "0",
+    "nonce_key": "0"
+  },
+  "funding": {
+    "_comment": "Setup-phase ETH from the local faucet (anvil dev account 0). Not part of W1 workflow cost; recorded separately.",
+    "asset_sender_eth": "1000000000000000000",
+    "deployer_eth": "10000000000000000000",
+    "bundler_eth": "1000000000000000000",
+    "sponsor_operator_eth": "1000000000000000000",
+    "paymaster_deposit": "100000000000000000"
+  }
+}

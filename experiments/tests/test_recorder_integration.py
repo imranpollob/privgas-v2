@@ -1,10 +1,10 @@
 """End-to-end recorder behaviour and the B0/B1/B2 integration (Prompt 3 Sec. 18).
 
 Each test generates the synthetic example run for a baseline into an isolated
-sandbox and checks the properties the baseline is supposed to have. Because
-B0/B1/B2 are not implemented in ``baselines/`` yet, these runs are fixtures --
-what is under test is the recorder's behaviour per baseline, not a
-measurement.
+sandbox and checks the properties the baseline is supposed to have. These runs
+are fixtures -- what is under test is the recorder's behaviour per baseline,
+not a measurement. Real B0/B1/B2 runs are tested end to end against anvil in
+experiments/workloads/w1/tests/.
 """
 
 from __future__ import annotations
@@ -117,7 +117,9 @@ class TestB1Integration(SandboxTestCase):
             self.assertIsNone(row["paymaster"],
                               "B1 has no Paymaster: null by construction")
             self.assertIsNone(row["paymaster_verification_gas_limit"])
-            self.assertEqual(row["observer_tier"], "A1")
+            # Schema 2.0.0: a mined UserOperation is recoverable from chain
+            # data alone, so its row is A0 (1.0.0 fixtures said A1).
+            self.assertEqual(row["observer_tier"], "A0")
 
     def test_b1_bundler_data_is_in_its_own_directory(self):
         _, rp = self.generate("B1")
@@ -196,21 +198,31 @@ class TestB2Integration(SandboxTestCase):
         rejected = [r for r in bundler_rows
                     if r["simulation_result"] == "rejected"]
         self.assertTrue(rejected, "the rejected attempt must be recorded")
-        self.assertEqual(rejected[0]["rejection_category"], "fee_too_low")
+        self.assertEqual(rejected[0]["rejection_category"],
+                         "paymaster_validation_revert")
         self.assertIsNone(rejected[0]["inclusion_timestamp_utc"])
+        self.assertIsNone(rejected[0]["submitted_bundle_transaction_hash"])
 
-        replaced = [r for r in bundler_rows if r["replacement_count"]]
-        self.assertTrue(replaced, "the replacement lineage must be recorded")
-        self.assertEqual(replaced[0]["replacement_lineage"],
-                         [rejected[0]["userop_hash"]])
+        retried = [r for r in bundler_rows
+                   if r["userop_hash"] == rejected[0]["userop_hash"]
+                   and r["simulation_result"] == "accepted"]
+        self.assertEqual([r["submission_attempt"] for r in retried], [2])
 
+    def test_b2_privately_rejected_operation_is_not_public(self):
+        """Schema 2.0.0 correction: an operation submitted to a private bundler
+        and never included was seen by no A0/A1 observer, so it has no public
+        row (1.0.0 fixtures recorded a public 'not_included' row for it)."""
+        _, rp = self.generate("B2")
         public = self.read_jsonl(rp.public_events_path)
-        never_included = [r for r in public if r["outcome"] == "not_included"]
-        self.assertTrue(never_included,
-                        "the never-included operation is kept in the public "
-                        "stream too, with its inclusion fields null")
-        self.assertIsNone(never_included[0]["block_number"])
-        self.assertIsNone(never_included[0]["success"])
+        self.assertEqual([r for r in public if r["outcome"] == "not_included"], [])
+
+    def test_b2_mined_bundle_hash_is_public(self):
+        _, rp = self.generate("B2")
+        public_hashes = {r["transaction_hash"]
+                         for r in self.read_jsonl(rp.public_events_path)}
+        for row in self.read_jsonl(rp.bundler_private_path):
+            if row["submitted_bundle_transaction_hash"]:
+                self.assertIn(row["submitted_bundle_transaction_hash"], public_hashes)
 
 
 class TestRecorderProperties(SandboxTestCase):

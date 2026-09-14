@@ -1,10 +1,26 @@
-"""Process-level mutual exclusion between attacker-visible and secret data.
+"""Import-level mutual exclusion between attacker-visible and secret data.
 
-Research rule (docs/research-plan.md Sec. 10, docs/experiment-schema.md):
-attack / feature-generation code must never be able to read secret ground
-truth. Comments are not an enforcement mechanism, so this module makes the
-two read-side packages *mutually unimportable within a single Python
-process*:
+DEFENCE IN DEPTH ONLY. The research boundary does not rely on this module.
+The primary separation (docs/experiment-schema.md Sec. 8.2) is:
+
+  1. distinct data paths -- secret ground truth only under data/private/,
+     attacker-visible tiers in separate observer_a0a1/ and observer_a2/
+     directories under data/public/;
+  2. distinct reader APIs -- experiments.attacker_view readers (path guards,
+     explicit observer tier) vs. experiments.labels loaders;
+  3. an explicit attack/evaluation process boundary -- predictions are frozen
+     with a sha256 in one process and joined with labels only in another,
+     which verifies the digest first;
+  4. validation and path guards -- schema allow-lists, the private-key
+     denylist, and refusal of data/private/ paths and secret filenames.
+
+What this module adds on top: within one Python process it makes the two
+read-side packages mutually unimportable, so an accidental mixed import fails
+loudly. A ``sys.meta_path`` hook is trivially bypassable (plain ``open()``,
+editing ``sys.meta_path``, a subprocess), so no guarantee in this repository
+may be argued from it.
+
+Mechanism:
 
   * importing ``experiments.attacker_view`` claims the PUBLIC side;
   * importing ``experiments.labels``       claims the PRIVATE side;

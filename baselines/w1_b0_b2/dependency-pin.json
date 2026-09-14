@@ -1,0 +1,17 @@
+{
+  "_comment": "Content digests of the dependency trees baselines/w1_b0_b2 compiles against (read-only remappings into B3's vendored lib/). Algorithm: experiments/workloads/w1/artifacts.py dependency_tree_digest. Checked by experiments/workloads/w1/tests/test_static.py. If this fails, B3's submodule pin or its vendored libs changed; B0-B2 must not silently follow.",
+  "account-abstraction": {
+    "path": "baselines/b3_privgas_v1/lib/account-abstraction/contracts",
+    "upstream": "https://github.com/eth-infinitism/account-abstraction",
+    "commit": "b36a1ed52ae00da6f8a4c8d50181e2877e4fa410",
+    "tag": "v0.9.0",
+    "identity_evidence": "docs/b3-reproduction.md (byte-for-byte recursive diff against upstream at this commit)",
+    "tree_sha256": "d810ee6a8ec4238f9c9f04ba18cc10e43b3e49a1962e8088493921c5feba50cb"
+  },
+  "openzeppelin-contracts": {
+    "path": "baselines/b3_privgas_v1/lib/openzeppelin-contracts/contracts",
+    "version": "5.6.1",
+    "tree_sha256": "c323f8ad65a1337cf777910377f6040bac233983e22d9afc31f9402841eda923"
+  },
+  "b3_submodule_commit": "02a3f0abdb979446545aa87149080bfb44e43a3e"
+}

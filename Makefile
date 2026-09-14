@@ -9,7 +9,8 @@ CHAIN_ID ?= unset
 ENTRYPOINT_VERSION ?= unset
 
 .PHONY: help install test benchmark run-local-experiment clean env-report \
-        recorder-test recorder-examples recorder-selfcheck recorder-docs
+        recorder-test recorder-examples recorder-selfcheck recorder-docs \
+        baselines-build baselines-test run-matched-baselines
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
@@ -25,7 +26,7 @@ install: ## Verify required tooling is present (no app dependencies exist yet)
 	@echo "(no contracts/circuits/app code has been added — see docs/decision-log.md)."
 	@echo "Run 'make env-report' for the full version report."
 
-test: scaffold-test recorder-test ## Run the full test suite
+test: scaffold-test recorder-test baselines-test ## Run the full test suite
 
 .PHONY: scaffold-test
 scaffold-test: ## Repository-layout and gitignore self-checks
@@ -40,6 +41,12 @@ scaffold-test: ## Repository-layout and gitignore self-checks
 	   echo "FAIL: data/private/ is NOT git-ignored"; rm -f "$$tmpfile"; exit 1; \
 	 fi; \
 	 rm -f "$$tmpfile"
+	@if git check-ignore --no-index -q data/public/baselines/b0-w1/20990101T000000Z-b0/observer_a0a1/public_events.jsonl; then \
+	   echo "PASS: generated data/public/ runs are git-ignored"; \
+	 else echo "FAIL: generated data/public/ runs are NOT git-ignored"; exit 1; fi
+	@if git check-ignore --no-index -q data/public/baselines/b0-w1-example/synthetic-20260301T120000Z-b0/run_manifest.public.json; then \
+	   echo "FAIL: synthetic data/public/ examples are git-ignored"; exit 1; \
+	 else echo "PASS: synthetic data/public/*-example runs remain committable"; fi
 	@for d in docs baselines contracts circuits test scripts experiments/workloads \
 	          experiments/privacy experiments/liveness experiments/settlement \
 	          experiments/analysis data/raw data/public data/private results figures paper; do \
@@ -60,6 +67,21 @@ recorder-selfcheck: ## Scan data/public/ for leaked private fields and values
 
 recorder-docs: ## Regenerate the schema field tables in docs/experiment-schema.md
 	@python3 -m experiments.recorder.docgen --write
+
+# --- Matched W1 baselines B0/B1/B2 (baselines/w1_b0_b2, experiments/workloads/w1)
+# Requires Foundry (forge, anvil 1.4.1) and Python eth-account/eth-abi/eth-utils.
+baselines-build: ## Compile the B0/B1/B2 contracts (EntryPoint v0.9.0, SimpleAccount, ObservablePaymaster)
+	@cd baselines/w1_b0_b2 && forge build
+
+baselines-test: baselines-build ## Forge semantics tests + live anvil tests for real B0/B1/B2
+	@echo "Running B0/B1/B2 Foundry tests..."
+	@cd baselines/w1_b0_b2 && forge test
+	@echo "Running B0/B1/B2 live W1 tests against anvil..."
+	@python3 -m unittest discover -s experiments/workloads/w1/tests -t .
+
+run-matched-baselines: ## One REAL W1 run per baseline through the recorder: make run-matched-baselines SEED=<seed> [BASELINE=B0|B1|B2|all]
+	@if [ -z "$(SEED)" ]; then echo "ERROR: SEED is required, e.g. make run-matched-baselines SEED=42 BASELINE=all"; exit 1; fi
+	@python3 -m experiments.workloads.w1 --baseline $(or $(BASELINE),all) --seed $(SEED)
 
 benchmark: ## Run the benchmark suite (placeholder until protocol code exists)
 	@echo "No benchmarks defined yet — add them under experiments/ and wire this target"
