@@ -1,0 +1,3 @@
+[submodule "baselines/b3_privgas_v1"]
+	path = baselines/b3_privgas_v1
+	url = https://github.com/imranpollob/stealth-protocol.git

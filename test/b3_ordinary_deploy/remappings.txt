@@ -1,0 +1,7 @@
+forge-std/=../../baselines/b3_privgas_v1/lib/forge-std/src/
+account-abstraction/=../../baselines/b3_privgas_v1/lib/account-abstraction/contracts/
+@semaphore-protocol/contracts/=../../baselines/b3_privgas_v1/lib/semaphore/packages/contracts/contracts/
+@zk-kit/lean-imt.sol/=../../baselines/b3_privgas_v1/lib/zk-kit.solidity/packages/lean-imt/contracts/
+poseidon-solidity/=../../baselines/b3_privgas_v1/lib/poseidon-solidity/
+@openzeppelin/contracts/=../../baselines/b3_privgas_v1/lib/openzeppelin-contracts/contracts/
+b3-baseline/=../../baselines/b3_privgas_v1/src/

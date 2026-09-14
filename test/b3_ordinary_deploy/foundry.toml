@@ -1,0 +1,10 @@
+[profile.default]
+src = "test"
+out = "out"
+libs = []
+test = "test"
+solc = "0.8.28"
+via_ir = true
+optimizer = true
+optimizer_runs = 200
+allow_paths = ["../../baselines/b3_privgas_v1"]

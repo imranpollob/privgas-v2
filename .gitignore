@@ -1,0 +1,62 @@
+# === privgas-v2 .gitignore ===
+# See docs/baseline-spec.md and docs/experiment-schema.md for why these
+# boundaries exist. When in doubt, keep raw/private data OUT of git.
+
+# --- Private data: NEVER commit -------------------------------------------
+# Everything under data/private/ is treated as sensitive by default
+# (e.g. real keys, unredacted logs, participant data, anything not cleared
+# for publication). Only the placeholder files below are allowed through.
+data/private/**
+!data/private/.gitkeep
+!data/private/README.md
+
+# --- Generated / local-only outputs ----------------------------------------
+# Raw experiment dumps and result artifacts are reproducible from
+# experiments/ + a recorded seed (docs/experiment-schema.md) and should not
+# bloat the repo. Keep the directory structure via .gitkeep.
+data/raw/*
+!data/raw/.gitkeep
+results/*
+!results/.gitkeep
+figures/*
+!figures/.gitkeep
+*.log
+env-report-*.txt
+
+# --- Secrets / environment --------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+
+# --- Language / tooling artifacts ------------------------------------------
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+
+# Foundry / Hardhat (if contracts/ tooling is added later)
+out/
+cache/
+artifacts/
+typechain/
+typechain-types/
+broadcast/
+
+# Circuit build outputs (if circuits/ tooling is added later)
+*.r1cs
+*.wasm
+*.zkey
+*.ptau
+
+# --- OS / editor -------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
