@@ -36,7 +36,10 @@ adds on top of that, not just measure end-to-end linkability.
 - **Kill condition**: measured effects reduce entirely to known address
   reuse / trivial account equality / ordinary application leakage, with no
   ERC-4337-specific boundary (`research-plan.md` §3, D1).
-- **Status**: open.
+- **Status**: open. D1 pilot (2026-09-15, `docs/d1-pilot-results.md`): every measured
+  non-trivial linkage reduced to account equality (R1 already in T; B3 R2 by account-level
+  Bootstrap → Spend) or ordinary timing correlation; gas/proof metadata added nothing —
+  kill condition met for the tested questions, pending an equality-free issuance design.
 
 ## RQ2 (D2 — fallback A): Validation-state contention and liveness
 

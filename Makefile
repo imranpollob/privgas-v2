@@ -11,7 +11,8 @@ ENTRYPOINT_VERSION ?= unset
 .PHONY: help install test benchmark run-local-experiment clean env-report \
         recorder-test recorder-examples recorder-selfcheck recorder-docs \
         baselines-build baselines-test run-matched-baselines calibrate-pvg \
-        b3-eval-build b3-prover-install b3-eip170-test run-b3-evaluation
+        b3-eval-build b3-prover-install b3-eip170-test run-b3-evaluation \
+        d1-test d1-pilot-run d1-pilot-attack d1-registry-docs
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
@@ -27,7 +28,7 @@ install: ## Verify required tooling is present (no app dependencies exist yet)
 	@echo "(no contracts/circuits/app code has been added — see docs/decision-log.md)."
 	@echo "Run 'make env-report' for the full version report."
 
-test: scaffold-test recorder-test b3-eip170-test baselines-test ## Run the full test suite
+test: scaffold-test recorder-test b3-eip170-test baselines-test d1-test ## Run the full test suite
 
 .PHONY: scaffold-test
 scaffold-test: ## Repository-layout and gitignore self-checks
@@ -102,6 +103,26 @@ run-matched-baselines: ## Real W1 runs (B0, B1 cold/warm, B2-Allowlist, B2-Signa
 run-b3-evaluation: b3-prover-install ## Matched B0/B1/B2-Signature on both profiles + B3-PrivGas-v1 on b3_compat_local, with profile effect: make run-b3-evaluation SEED=<seed>
 	@if [ -z "$(SEED)" ]; then echo "ERROR: SEED is required, e.g. make run-b3-evaluation SEED=42"; exit 1; fi
 	@python3 -m experiments.workloads.w1 --variant matched --profile eip170_standard --profile b3_compat_local --seed $(SEED)
+
+# --- D1 multi-actor pilot (docs/d1-pilot-results.md) ---------------------------------
+d1-test: b3-prover-install ## D1 pilot: static + live tests (workload, registry, splits, models, boundary)
+	@python3 -m unittest discover -s experiments/workloads/d1/tests -t .
+	@python3 -m unittest discover -s experiments/privacy/d1/tests -t .
+
+d1-registry-docs: ## Regenerate the T/AA/G tables in docs/d1-feature-registry.md
+	@python3 -m experiments.privacy.d1.registry --write
+
+d1-pilot-run: baselines-build b3-eval-build b3-prover-install ## Run + record the pilot matrix: make d1-pilot-run SEED_FILE=data/private/d1-pilot/master_seed.txt BATCH=<utc stamp>
+	@if [ -z "$(SEED_FILE)" ] || [ -z "$(BATCH)" ]; then echo "ERROR: SEED_FILE and BATCH are required"; exit 1; fi
+	@python3 -m experiments.workloads.d1 --master-seed-file $(SEED_FILE) --batch $(BATCH) --no-build
+
+d1-pilot-attack: ## Splits -> self-check -> training labels -> attacks -> scoring (separate processes): make d1-pilot-attack BATCH=<batch> ROUND=<round>
+	@if [ -z "$(BATCH)" ] || [ -z "$(ROUND)" ]; then echo "ERROR: BATCH and ROUND are required"; exit 1; fi
+	@test -f results/d1-pilot/$(BATCH)/splits.json || python3 -m experiments.privacy.d1.attack splits --batch $(BATCH)
+	@python3 -m experiments.privacy.d1.evaluate selfcheck --batch $(BATCH)
+	@test -d results/d1-pilot/$(BATCH)/training_labels || python3 -m experiments.privacy.d1.evaluate export-training-labels --batch $(BATCH)
+	@python3 -m experiments.privacy.d1.attack run --batch $(BATCH) --round $(ROUND)
+	@python3 -m experiments.privacy.d1.evaluate score --batch $(BATCH) --round $(ROUND) --write-doc
 
 benchmark: ## Run the benchmark suite (placeholder until protocol code exists)
 	@echo "No benchmarks defined yet — add them under experiments/ and wire this target"

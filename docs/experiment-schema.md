@@ -488,7 +488,7 @@ code rather than frozen into the raw record.
 | `sender` | public | A0 | `null` ok | The account the operation/transaction originates from. For an AA row this is the smart account, not the bundler EOA. |
 | `paymaster` | public | A0 | `null` ok | Sponsoring Paymaster. Null where the baseline has none -- for B1 this is null by construction, not merely unknown. |
 | `target` | public | A0 | `null` ok | Contract or account the application action addresses. |
-| `subject_account` | public | A0 | `null` ok | Account an on-chain event is about when it is neither the row's sender nor its target: the account named in a Paymaster allowlist log, or the account credited by an EntryPoint Deposited log. Added in 2.0.0 because an ordinary allowlist Paymaster publishes the sponsored account before the operation, and the 1.0.0 schema had nowhere to record it. |
+| `subject_account` | public | A0 | `null` ok | Account an on-chain event is about when it is neither the row's sender nor its target: the account named in a Paymaster allowlist log, or the account credited by an EntryPoint Deposited log. Added in 2.0.0 because an ordinary allowlist Paymaster publishes the sponsored account before the operation, and the 1.0.0 schema had nowhere to record it. W1 recorders also use it for the recipient of an ERC-20 transfer (public in the calldata and the Transfer log; populated from 2026-09-15 on, omitted by earlier recordings). |
 | `bundler_beneficiary` | public | A0 | `null` ok | Beneficiary address paid by the EntryPoint. Public on chain -- this is NOT bundler-private data. |
 | `method_selector` | public | A0 | `null` ok | 4-byte selector of the public call. |
 | `calldata_class` | public | A0 | `null` ok | Coarse class of the public calldata. A class rather than raw calldata so the field cannot become a dumping ground. |
@@ -723,7 +723,18 @@ predictions have been frozen:
    public and, at A2, bundler data; generates features; predicts; calls
    `freeze_predictions`, which writes `predictions.jsonl` plus a manifest
    recording its sha256, the relation (R1/R2/R3), the observer tier, and the
-   feature set (`T`, `G`, or `T+G` — `docs/research-plan.md` §9.2).
+   feature set (`T`, `G`, or `T+G` — `docs/research-plan.md` §9.2; since
+   2026-09-15 any combination of the D1 registry families `T`, `AA`, `G`,
+   optionally with `-minus-<family>` ablation suffixes, see
+   `docs/d1-feature-registry.md`).
+   *Profiling training labels (2026-09-15, D1 pilot).* A learned attack may
+   additionally read binary pair labels for its **training runs only**. They
+   are exported by a separate `experiments.labels` process into a per-fold
+   directory, only for runs the frozen split manifest puts in that fold's
+   training set; the export refuses any test run, the attack refuses any file
+   outside its fold, and the digests of every label file read are written into
+   the frozen prediction manifest (`attack_provenance`), where evaluation
+   re-checks that no test run was among them (`docs/d1-pilot-results.md`).
 2. **Process 2** (`experiments.labels`, cannot import attacker_view) verifies
    the manifest exists and that the file still hashes to the recorded digest,
    then loads ground truth and joins.

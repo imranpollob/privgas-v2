@@ -405,7 +405,10 @@ SCHEMA = StreamSchema(
                   "EntryPoint Deposited log. Added in 2.0.0 because an "
                   "ordinary allowlist Paymaster publishes the sponsored "
                   "account before the operation, and the 1.0.0 schema had "
-                  "nowhere to record it.", nullable=True),
+                  "nowhere to record it. W1 recorders also use it for the "
+                  "recipient of an ERC-20 transfer (public in the calldata and "
+                  "the Transfer log; populated from 2026-09-15 on, omitted by "
+                  "earlier recordings).", nullable=True),
         FieldSpec("bundler_beneficiary", check_address, CLASS_PUBLIC, "A0",
                   "Beneficiary address paid by the EntryPoint. Public on "
                   "chain -- this is NOT bundler-private data.", nullable=True),

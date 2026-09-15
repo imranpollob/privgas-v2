@@ -619,3 +619,74 @@ Format for each entry:
   renamed `profile_labels`. The Semaphore proof encoding is 416 bytes (13 words),
   not 448.
 
+
+## 2026-09-15: D1 pilot — multi-actor dataset design
+
+- **Decision**: one run = one chain with N independent actors (N = 4, 8, 16, 32; 3
+  replicates; B0, B1, B2-Signature, B3-PrivGas-v1 primary, B2-Allowlist auxiliary; S0 for
+  every baseline, S1 additionally for B3), all on `b3_compat_local` with an identical setup.
+  Per-actor identities are drawn from (secret seed, N, slot, kind) with no identifier derived
+  from another; run seeds derive from a secret master seed file under `data/private/`, so
+  baselines/scenarios at one (replicate, N) share actors (matched) and replicates / pool sizes
+  never do. Block timestamps and the bundler's A2 clock are schedule time.
+- **Why**: candidate sets > 1 require concurrency on one chain; matched actors isolate the
+  gas mechanism; independent draws and simulated time keep the harness from encoding actor
+  order or wall-clock artefacts (audited in every scoring run).
+- **Alternatives considered**: one actor per chain with post-hoc pooling (no real candidate
+  set, no shared root); wall-clock delays (would leak proof-generation time).
+
+## 2026-09-15: D1 pilot — B3 single-final-root schedule and Bootstrap callGasLimit
+
+- **Decision**: all Bootstraps before any Spend; every Spend proof against the one final root,
+  verified off chain against every emitted intermediate root and both on-chain roots. The
+  pilot's Bootstrap `callGasLimit` is 450,000 (fixed for every Bootstrap and N). No B3 source,
+  root policy or verifier changed.
+- **Why**: latest-root-only validation would otherwise make root contention a confound (a
+  separate D2 question). Frozen `CreditPool.deposit` gas grows with the LeanIMT (measured
+  143,327 → 400,442 gas as an EOA call for tree sizes 0 → 31); with the single-actor value
+  160,000 every insertion after the first reverts inside execution after BootstrapPaymaster
+  consumed the grant. 450,000 respects the frozen 0.005 ETH cap; the 10 % unused-gas penalty
+  on shallow insertions is a cost effect. The b3-eval-config.json single-actor value is
+  unchanged.
+- **Verified**: a stale-root proof is rejected (`RootMismatch`) and Spends do not change the
+  root (`experiments/workloads/d1/tests/test_live.py`).
+
+## 2026-09-15: Semaphore artifacts for depths 2–5 pinned on first download
+
+- **Decision**: `semaphore-{2..5}.wasm/zkey` (artifact version 4.13.0, the URLs the pinned
+  library resolves) added to `artifacts-pin.json` with sha256 of the first download. The prover
+  gained a `group_root` operation and refuses a proof depth different from the group depth.
+- **Why**: groups of 4–32 members need depths 2–5. The host publishes no checksums; authenticity
+  is established by proofs verifying on chain against the frozen `SemaphoreVerifier` key
+  points of the same depth.
+
+## 2026-09-15: Recorder completeness fix — ERC-20 recipient in `subject_account`
+
+- **Decision**: W1 recorders now populate `public_events.subject_account` with the ERC-20
+  recipient (transaction-level transfers, in-bundle Transfer logs, mint). Schema stays 5.0.0
+  (the field's definition — the account an event is about that is neither sender nor target —
+  already covers it; description text extended, docs regenerated). Earlier recordings are
+  unchanged and lack the recipient.
+- **Why**: found while building the D1 attacks: the recipient is public in calldata and logs,
+  so omitting it gave attacks an artificially incomplete T trace (Prompt 4 §23).
+
+## 2026-09-15: D1 feature registry and conventions
+
+- **Decision**: one canonical registry (`experiments/privacy/d1/registry.py`,
+  `docs/d1-feature-registry.md`) classifies every row-kind × field as T / AA / G by causal
+  origin (row origin; counterfactual value among B1 / B2-Signature / B3 for the application
+  op). Genuine ambiguities carry notes and an alternative `field_kind` convention (AA-shaped
+  fields of the B3 Bootstrap op → AA; the B3 announcement → T); R2 is evaluated under both.
+  `freeze_predictions` now accepts any T/AA/G combination with `-minus-<family>` ablation
+  suffixes, plus an `attack_provenance` record.
+
+## 2026-09-15: D1 learned attacks use profiling training labels, fold-scoped
+
+- **Decision**: learned attacks (conditional logit, L2 by inner leave-one-replicate-out CV)
+  train on binary pair labels of their fold's training runs only, exported by a separate
+  `experiments.labels` process per frozen split; provenance digests are re-audited at scoring.
+- **Why**: a held-out cross entropy requires a trained probabilistic model; a profiling
+  attacker that can label its own simulated runs is the standard assumption. Test-run labels
+  never reach the attack process. A fixed L2 = 1 was tried first on a scratch batch and
+  produced below-chance held-out CE for timing-only S0 models (overfitting); the inner-CV
+  selection replaced it before any pilot result was produced.

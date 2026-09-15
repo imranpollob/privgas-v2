@@ -38,6 +38,18 @@ class ProverUnavailable(RuntimeError):
     """Node, the pinned npm package, or the pinned artifacts are missing."""
 
 
+def group_depth(size: int) -> int:
+    """Semaphore proof depth for a group of ``size`` members.
+
+    ``generateProof`` uses the Merkle-proof length (the LeanIMT depth,
+    ceil(log2(size))) and 1 for a one-member group; the frozen single-actor W1
+    configuration uses depth 1 for exactly that reason.
+    """
+    if size < 1:
+        raise ValueError("a Semaphore group needs at least one member")
+    return max(1, (size - 1).bit_length())
+
+
 def prover_dir(root: Optional[Path] = None) -> Path:
     return (Path(root) if root else repo_root()) / PROVER_DIR
 
@@ -149,6 +161,12 @@ class SemaphoreProver:
     def commitment(self, identity_secret: str) -> int:
         return int(self._request({"op": "commitment",
                                   "identity_secret": identity_secret})["commitment"])
+
+    def group_root(self, members: List[int]) -> Dict[str, int]:
+        """Root and depth of ``new Group(members)`` (members in insertion order)."""
+        resp = self._request({"op": "group_root", "members": [str(m) for m in members]})
+        return {"root": int(resp["group_root"]), "depth": int(resp["depth"]),
+                "size": int(resp["size"])}
 
     def prove(self, *, identity_secret: str, members: List[int], message: int, scope: int,
               merkle_tree_depth: int, label: str) -> ProofResult:

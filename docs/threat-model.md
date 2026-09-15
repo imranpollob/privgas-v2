@@ -73,6 +73,10 @@ A2 (in-repo bundler); assumed honest: local node, bundler, sponsor operator and
 the recipient's local prover. Evaluated only on the NON-PRODUCTION
 `b3_compat_local` chain profile.
 
+D1 pilot (2026-09-15, `docs/d1-pilot-results.md`): attacks at A0 only, with auxiliary
+knowledge of the candidate wallet directory (R3) and a profiling attacker holding labelled
+training runs; all baselines on `b3_compat_local`.
+
 Otherwise not yet finalized per-baseline. Each baseline (`docs/baseline-spec.md`
 registry) must state, when implemented, which of A0-A3 it is evaluated
 under and which components are assumed honest for that evaluation. An

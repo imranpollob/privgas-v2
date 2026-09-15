@@ -95,5 +95,8 @@ under `recorder/examples/` remain synthetic fixtures — every row carries
 enforces both. They document the schema. They are not measurements.
 Schema version: 4.0.0.
 
-No attack, model, metric or privacy mechanism lives here yet. The recorder
+The D1 pilot (multi-actor workload `workloads/d1/`, attacks and evaluation
+`privacy/d1/`, results `docs/d1-pilot-results.md`) is the first attack code; it
+keeps attack (`privacy/d1/attack`) and evaluation (`privacy/d1/evaluate`) in
+separate processes. The recorder
 observes experiments; it makes no privacy claim of its own.

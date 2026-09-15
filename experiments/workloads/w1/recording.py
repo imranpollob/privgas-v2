@@ -19,7 +19,10 @@ the public stream. Each row carries a content-derived ``trace_phase``.
 * contract-creation tx         -> ``eoa_transaction`` / ``contract_creation``
   (``subject_account`` = created contract), plus a mint ``asset_transfer``
   (phase ``infrastructure``) for the token's constructor
-* ERC20.transfer tx            -> ``asset_transfer``
+* ERC20.transfer tx            -> ``asset_transfer`` (``subject_account`` = the token
+  recipient; also on mint and in-bundle ``Transfer`` rows -- added 2026-09-15, see
+  docs/decision-log.md: the recipient is public in the calldata / Transfer log and
+  earlier recordings omitted it)
 * plain ETH transfer           -> ``native_transfer`` (phase ``funding``)
 * Paymaster ``deposit()`` tx    -> ``paymaster_event`` / ``paymaster_deposit``
   (sender = funding wallet, target = Paymaster), plus ``entrypoint_deposit``
@@ -109,7 +112,8 @@ def _lower(addr: Optional[str]) -> Optional[str]:
     return None if addr is None else addr.lower()
 
 
-def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
+def public_observations(chain_dump: Dict[str, Any],
+                        scenario_id: str = "scn-0") -> List[Observation]:
     contracts = chain_dump["contracts"]
     token = contracts["W1Token"].lower()
     ep = contracts["EntryPoint"].lower()
@@ -126,7 +130,7 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
         sel = "0x" + data[:4].hex() if len(data) >= 4 else None
         status_ok = _u(rc["status"]) == 1
         common = dict(
-            scenario_id="scn-0", observer_tier="A0",
+            scenario_id=scenario_id, observer_tier="A0",
             block_number=_u(rc["blockNumber"]), block_hash=blk["hash"],
             block_timestamp_utc=_iso(blk["timestamp"]),
             transaction_index=_u(rc["transactionIndex"]),
@@ -150,7 +154,7 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
                     out.append(Observation(
                         event_type="asset_transfer", asset_type="erc20",
                         trace_phase="infrastructure", log_index=_u(log["logIndex"]),
-                        sender=d["from"], target=log["address"],
+                        sender=d["from"], target=log["address"], subject_account=d["to"],
                         asset_contract=log["address"], asset_amount=d["amount"],
                         outcome="success", success=True, **log_common))
         elif to in paymasters and sel == abi.SELECTOR_PM_DEPOSIT:
@@ -163,13 +167,13 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
                     out.append(_deposit_row(log, d, log_common,
                                             deposit_before.get(tx["hash"], {})))
         elif to == token and sel == abi.SELECTOR_ERC20_TRANSFER:
-            _, amount = abi.decode_erc20_transfer(data)
+            recipient, amount = abi.decode_erc20_transfer(data)
             transfer_log = next((l for l, d in logs if d and d["event"] == "Transfer"), None)
             out.append(Observation(
                 event_type="asset_transfer", asset_type="erc20",
                 log_index=_u(transfer_log["logIndex"]) if transfer_log else None,
-                sender=tx["from"], target=tx["to"], method_selector=sel,
-                calldata_class="erc20_transfer", nonce=_u(tx["nonce"]),
+                sender=tx["from"], target=tx["to"], subject_account=recipient,
+                method_selector=sel, calldata_class="erc20_transfer", nonce=_u(tx["nonce"]),
                 asset_contract=tx["to"], asset_amount=amount,
                 revert_reason_class=None if status_ok else "target_reverted",
                 **tx_gas, **common))
@@ -312,7 +316,8 @@ def _bundle_observations(chain_dump, t, data, logs, common, tx_gas,
                 inner_sel = "0x" + inner[:4].hex()
             rows.append(Observation(
                 event_type="asset_transfer", asset_type="erc20", log_index=li,
-                sender=d["from"], target=log["address"], method_selector=inner_sel,
+                sender=d["from"], target=log["address"], subject_account=d["to"],
+                method_selector=inner_sel,
                 calldata_class="erc20_transfer" if inner_sel == abi.SELECTOR_ERC20_TRANSFER
                 else None,
                 asset_contract=log["address"], asset_amount=d["amount"],
@@ -378,7 +383,8 @@ def _b3_bundle_row(log, d, decoded_ops, log_common, verifier) -> Observation:
     raise ValueError(f"unexpected B3 log inside a bundle: {d['event']}")
 
 
-def bundler_observations(bundler_log: List[Dict[str, Any]]) -> List[BundlerObservation]:
+def bundler_observations(bundler_log: List[Dict[str, Any]],
+                         scenario_id: str = "scn-0") -> List[BundlerObservation]:
     by_op: Dict[Tuple[str, int], Dict[str, Dict[str, Any]]] = {}
     order: List[Tuple[str, int]] = []
     attempt = 0
@@ -398,7 +404,7 @@ def bundler_observations(bundler_log: List[Dict[str, Any]]) -> List[BundlerObser
         sub, inc = ev.get("submitted"), ev.get("included")
         out.append(BundlerObservation(
             bundler_id=rec["bundler_id"], userop_hash=rec["userop_hash"],
-            sender=rec["sender"], nonce=int(rec["nonce"]), scenario_id="scn-0",
+            sender=rec["sender"], nonce=int(rec["nonce"]), scenario_id=scenario_id,
             submission_attempt=rec["submission_attempt"],
             receive_timestamp_utc=rec["timestamp_utc"],
             simulation_timestamp_utc=sim["timestamp_utc"] if sim else None,

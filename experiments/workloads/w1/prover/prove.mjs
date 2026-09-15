@@ -11,11 +11,19 @@
 //
 // Protocol: one JSON object per stdin line, one JSON object per stdout line.
 //   request  {"id", "op": "commitment", "identity_secret"}
+//   request  {"id", "op": "group_root", "members": [dec...]}
 //   request  {"id", "op": "prove", "identity_secret", "members": [dec...],
 //             "message": dec, "scope": dec, "merkle_tree_depth": n,
 //             "wasm": path, "zkey": path}
 //   response {"id", "ok": true, ...} or {"id", "ok": false, "error"}
 // The identity secret arrives on stdin only (never argv, never disk).
+//
+// group_root (added for the D1 multi-actor pilot) rebuilds `new Group(members)` -- the
+// same LeanIMT the frozen CreditPool maintains on chain -- and returns its root and depth,
+// so the harness can compare the off-chain group with CreditPool.currentRoot() before any
+// proof is made. For groups of two or more members, prove refuses a merkle_tree_depth
+// different from the group's own depth (the value generateProof infers when none is
+// given), so the caller cannot silently pick an artifact of another depth.
 
 import { createInterface } from "node:readline"
 import { Identity, Group, generateProof, verifyProof } from "@semaphore-protocol/core"
@@ -36,6 +44,11 @@ for await (const line of rl) {
     continue
   }
   try {
+    if (req.op === "group_root") {
+      const g = new Group(req.members.map((m) => BigInt(m)))
+      reply({ id: req.id, ok: true, group_root: g.root.toString(), depth: g.depth, size: g.size })
+      continue
+    }
     const identity = new Identity(req.identity_secret)
     if (req.op === "commitment") {
       reply({ id: req.id, ok: true, commitment: identity.commitment.toString() })
@@ -43,6 +56,9 @@ for await (const line of rl) {
     }
     if (req.op !== "prove") throw new Error(`unknown op ${req.op}`)
     const group = new Group(req.members.map((m) => BigInt(m)))
+    if (group.size >= 2 && req.merkle_tree_depth !== group.depth) {
+      throw new Error(`merkle_tree_depth ${req.merkle_tree_depth} != group depth ${group.depth}`)
+    }
     const message = BigInt(req.message)
     const scope = BigInt(req.scope)
     const started = process.hrtime.bigint()

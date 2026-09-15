@@ -16,6 +16,7 @@ least resistance and makes a violation visible in the recorded artefacts.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
@@ -26,6 +27,11 @@ from ..recorder.version import SCHEMA_VERSION
 
 PREDICTIONS_FILE = "predictions.jsonl"
 MANIFEST_FILE = "predictions.manifest.json"
+
+#: Families in canonical order T, AA, G (2026-09-15: AA added for the D1 pilot;
+#: the original "T" / "G" / "T+G" values remain valid).
+RE_FEATURE_SET = re.compile(
+    r"^(?:none|T|AA|G|T\+AA|T\+G|AA\+G|T\+AA\+G)(?:-minus-[a-z]+(?:_[a-z]+)*)*$")
 
 
 def freeze_predictions(
@@ -39,6 +45,7 @@ def freeze_predictions(
     feature_set: str,
     root: Optional[Path] = None,
     now: Optional[datetime] = None,
+    extra: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Write predictions plus a manifest that pins their bytes.
 
@@ -47,9 +54,13 @@ def freeze_predictions(
     (docs/threat-model.md).
 
     ``feature_set`` records which information the attack was allowed to use --
-    "T", "G" or "T+G" for the main D1 comparison (docs/research-plan.md
-    Sec. 9.2). Writing it at freeze time means the comparison cannot be
-    relabelled afterwards.
+    a combination of the feature families T (application trace), AA
+    (account-abstraction trace) and G (gas-mechanism trace) of the D1 feature
+    registry (docs/d1-feature-registry.md), e.g. "T", "T+AA", "G", "T+G",
+    "T+AA+G", optionally followed by ablation suffixes such as
+    "-minus-timing" (docs/research-plan.md Sec. 9.2). "none" is an attack
+    that uses no public feature (a chance baseline). Writing it at freeze time
+    means the comparison cannot be relabelled afterwards.
 
     Each prediction row must carry at least ``subject_ref``, which is matched
     against the ``subject_ref`` of the corresponding ground-truth relation
@@ -57,9 +68,11 @@ def freeze_predictions(
     """
     if relation not in ("R1", "R2", "R3"):
         raise ValueError(f"relation must be R1, R2 or R3; got {relation!r}")
-    if feature_set not in ("T", "G", "T+G"):
+    if not RE_FEATURE_SET.match(feature_set):
         raise ValueError(
-            f"feature_set must be 'T', 'G' or 'T+G'; got {feature_set!r}")
+            "feature_set must be 'none' or a '+'-joined combination of T, AA, G "
+            "in that order (e.g. 'T+AA+G'), optionally followed by "
+            f"'-minus-<family>' ablation suffixes; got {feature_set!r}")
 
     rp = paths_mod.run_paths(experiment_id, run_id, root)
     out_dir = rp.predictions_dir / attack_id / relation
@@ -100,6 +113,13 @@ def freeze_predictions(
         "predictions_sha256": sha256_file(pred_path),
         "frozen_at_utc": frozen_at,
     }
+    if extra:
+        # Attack provenance (model configuration, training runs and the digests
+        # of any training-label files read). Cannot override the fields above.
+        clash = sorted(set(extra) & set(manifest))
+        if clash:
+            raise ValueError(f"extra manifest keys {clash} clash with frozen fields")
+        manifest["attack_provenance"] = dict(extra)
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
