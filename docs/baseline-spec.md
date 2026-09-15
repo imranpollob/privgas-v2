@@ -36,6 +36,13 @@ A baseline must:
 | **B4-CrossAccount** | no contracts of its own: the frozen B3 contracts via `baselines/b3_eval`; runner `experiments/workloads/d1` (`--config b4`) | **Experimental causal ablation of B3, not a protocol.** Identical contracts, proofs, parameters and schedule to B3-PrivGas-v1 in the D1 multi-actor workload; only the actor workflow differs: an independent issuer account (announced by a dedicated issuer funder) performs the Bootstrap / CreditPool deposit, and a DIFFERENT spender account (the account B3 would use; receives the W1 asset) redeems through CreditPaymaster with a proof over its own userOpHash (its Spend deploys it: initCode, nonce 0). The witness handoff is off chain (ground truth only). Runs fail unless issuer and spender are publicly separated. Recorder id `B4-CrossAccount` (schema 5.1.0). `b3_compat_local` only. Tiers: A0, A2. `docs/d1-b4-results.md`. | uncommitted, 2026-09-15 |
 | B4-B6 (reserved) | not yet implemented | Independent-issuance credit / prior-art prepaid Paymaster / shielded-pool reference — see `docs/research-plan.md` §5. | — |
 
+**D2 liveness measurements (2026-09-15, `docs/d2-pilot-results.md`)** use the same frozen B3
+contracts and `b3_compat_local` profile, driven by `experiments/liveness/d2/` with a staged
+bundler (simulation and submission separated) and two experimental wallet-side Bootstrap
+`callGasLimit` values; they record no linkage labels and therefore write their own attempt
+records (`experiments/liveness/d2/records.py`) rather than the recorder's three streams. The
+frozen `b3-eval-config.json` values are unchanged.
+
 `experiments/recorder/adapters/` holds one adapter per baseline and
 `experiments/recorder/baselines.py` declares each baseline's structural
 capabilities (does it use ERC-4337, a bundler, a Paymaster, a credit system,

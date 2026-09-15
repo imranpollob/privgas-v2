@@ -73,6 +73,12 @@ A2 (in-repo bundler); assumed honest: local node, bundler, sponsor operator and
 the recipient's local prover. Evaluated only on the NON-PRODUCTION
 `b3_compat_local` chain profile.
 
+D2 pilot (2026-09-15, `docs/d2-pilot-results.md`): liveness measurements at A0 (chain) and A2
+(our instrumented staged bundler). The only targeted adversary modelled is **A2** — the bundler
+operator or a party fed its simulation results — because the harness has no public mempool, so
+no A0/A1 observer can see a pending Spend. Assumed honest: node, bundler, sponsor operator,
+provers. `b3_compat_local` only.
+
 D1 pilot (2026-09-15, `docs/d1-pilot-results.md`): attacks at A0 only, with auxiliary
 knowledge of the candidate wallet directory (R3) and a profiling attacker holding labelled
 training runs; all baselines on `b3_compat_local`.

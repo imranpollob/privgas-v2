@@ -1,0 +1,43 @@
+{
+  "_comment": "D2 pilot (docs/d2-pilot-results.md). Frozen B3 contracts on b3_compat_local; W1 and B3 parameters are inherited unchanged from baselines/w1_b0_b2/w1-config.json and baselines/b3_eval/b3-eval-config.json. Seeds are recorded in the clear: D2 records no linkage labels (decision-log 2026-09-14, metadata-only runs). Changing a value after a result is reported requires a docs/decision-log.md entry.",
+  "config_version": "1",
+  "evaluation_profile": "b3_compat_local",
+  "seeds": [2026091501, 2026091502, 2026091503, 2026091504, 2026091505],
+  "setup": {
+    "_comment": "D2 experiment setup, not B3: one chain sponsors hundreds of operations, so the faucet tops up the bundler and sponsor operator and the sponsor operator adds this much to each B3 Paymaster's EntryPoint deposit (plain EntryPoint.depositTo). Snapshots restore balances between trials.",
+    "bundler_eth": "50000000000000000000",
+    "sponsor_operator_eth": "50000000000000000000",
+    "paymaster_extra_deposit": "20000000000000000000"
+  },
+  "bundler": {
+    "_comment": "Bundle transaction gas = sum over ops of (verification + call + preVerification + paymaster verification + postOp limits) + bundle_gas_per_op.",
+    "bundle_gas_per_op": "100000"
+  },
+  "d2a": {
+    "_comment": "Bootstrap callGasLimit for every Bootstrap in D2-A (initial pools, contenders, adversary). EXPERIMENTAL wallet-side value, NOT the frozen single-actor value (160,000, which fails beyond tree size 1: D2-B). Chosen from the D2-B curve before any D2-A result: the largest tree in D2-A stays below 128 members. It respects BootstrapPaymaster's frozen 0.005 ETH cap at the W1 fee (2 gwei).",
+    "bootstrap_call_gas_limit": 1000000,
+    "segment_fractions": {"_comment": "Default decomposition of a vulnerability window T into controlled virtual segments (Exp3 / policy matrix).", "prove": 0.3, "submit": 0.05, "sim": 0.05, "queue": 0.3, "chain": 0.3},
+    "control": {"pool_sizes": [2, 4, 8, 16, 32], "trials_per_seed": 2},
+    "race": {"pool_sizes": [8, 16, 32]},
+    "proof_latency": {"pool_sizes": [4, 8, 16, 32, 64], "samples": 20, "warmup": 1},
+    "stochastic": {"pool_sizes": [8, 16, 32], "lambdas": [0, 0.25, 0.5, 1, 2], "windows": [0.25, 0.5, 1, 2, 5], "trials_per_seed": 8, "contender_capacity": 40},
+    "policy_retry": {"pool_size": 16, "lambdas": [0, 0.25, 0.5, 1, 2], "windows": [0.5, 1, 2, 5], "policies": ["P0", "P1", "P2"], "trials_per_seed": 4, "max_attempts": 10, "contender_capacity": 110},
+    "segment_dominance": {"pool_size": 16, "lambda": 1, "base_segment": 0.05, "dominant_segment": 2.0, "policies": ["P0", "P1"], "trials_per_seed": 8, "contender_capacity": 20},
+    "measured_latency_retry": {"_comment": "Proof segment = the real measured proof time of each attempt; other segments are assumptions (block_intervals).", "pool_size": 16, "lambdas": [0.25, 1], "submit": 0.05, "sim": 0.05, "queue": 0.0, "block_intervals": [2, 12], "policies": ["P0", "P1"], "trials_per_seed": 2, "max_attempts": 10, "contender_capacity": 110},
+    "concurrency": {"pool_size": 16, "cohort_sizes": [1, 2, 4, 8], "stochastic_lambdas": [0.5, 1], "stochastic_window": 2, "policies": ["P0", "P1"], "trials_per_seed": 2, "max_attempts": 10, "contender_capacity": 60},
+    "bundle_size": {"pool_size": 16, "bundle_sizes": [1, 2, 4, 8]},
+    "adversary": {"pool_size": 16, "budgets": [0, 1, 2, 4, 8], "window": 2, "policies": ["P0", "P1"], "max_attempts": 20, "delay": 0.05, "cohort_sizes": [1, 4], "capacity": 12}
+  },
+  "d2b": {
+    "_comment": "Bootstrap gas scaling. frozen_call_gas_limit is the value in b3-eval-config.json (read, not copied, at run time; recorded here only for the reader). high_call_gas_limit is an EXPERIMENTAL value that lets the tree keep growing; it is never reported as the frozen baseline and is not a protocol fix.",
+    "max_tree_size": 256,
+    "seeds": [2026091501, 2026091502],
+    "frozen_call_gas_limit_for_reference": 160000,
+    "high_call_gas_limit": 1500000,
+    "required_limit_search": {"low": 100000, "high": 1500000, "tolerance": 1000},
+    "natural_sequence_attempts": 6,
+    "fee_grid_gwei": [1, 2, 4, 6, 8, 9, 10, 11],
+    "fee_grid_sizes": [1, 2, 4, 8, 16, 32, 64, 128, 256],
+    "spend_fee_grid_pool_size": 16
+  }
+}

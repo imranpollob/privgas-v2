@@ -1,5 +1,5 @@
 {
-  "_comment": "Semaphore v4 trusted-setup artifacts used to generate real B3 proofs. URLs are exactly those @zk-kit/artifacts 2.0.1 resolves for @semaphore-protocol/proof 4.14.2 (maybeGetSnarkArtifacts(Project.SEMAPHORE, {parameters: [depth], version: '4.13.0'})). Files are downloaded into .artifacts/ (gitignored) and refused unless their sha256 matches. On-chain verification uses B3's vendored SemaphoreVerifier.sol, whose verification key must agree with these artifacts (a mismatch makes the on-chain verification fail, which the live tests would catch). Depth 1 was pinned on 2026-09-14 (single-actor W1). Depths 2-5 were pinned on 2026-09-15 for the D1 multi-actor pilot (group sizes 2-32): the upstream host publishes no checksums, so these digests are first-download pins; their authenticity is established by the live D1 tests, in which proofs made with them verify on chain against the verification-key points hard-coded in the FROZEN SemaphoreVerifier for the same depth.",
+  "_comment": "Semaphore v4 trusted-setup artifacts used to generate real B3 proofs. URLs are exactly those @zk-kit/artifacts 2.0.1 resolves for @semaphore-protocol/proof 4.14.2 (maybeGetSnarkArtifacts(Project.SEMAPHORE, {parameters: [depth], version: '4.13.0'})). Files are downloaded into .artifacts/ (gitignored) and refused unless their sha256 matches. On-chain verification uses B3's vendored SemaphoreVerifier.sol, whose verification key must agree with these artifacts (a mismatch makes the on-chain verification fail, which the live tests would catch). Depth 1 was pinned on 2026-09-14 (single-actor W1). Depths 2-5 were pinned on 2026-09-15 for the D1 multi-actor pilot (group sizes 2-32): the upstream host publishes no checksums, so these digests are first-download pins; their authenticity is established by the live D1 tests, in which proofs made with them verify on chain against the verification-key points hard-coded in the FROZEN SemaphoreVerifier for the same depth. Depths 6-7 were pinned on 2026-09-15 for the D2 pilot (root contention grows trees of 16-32 members to up to 127): first-download pins, authenticated the same way by the D2 live tests (proofs verify on chain against the frozen SemaphoreVerifier).",
   "semaphore_core_version": "4.14.2",
   "semaphore_artifact_version": "4.13.0",
   "artifacts": {
@@ -42,6 +42,22 @@
       "zkey": {"path": ".artifacts/semaphore/4.13.0/semaphore-5.zkey",
                "url": "https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-5.zkey",
                "sha256": "a1431c24dc49e98d07d48e7bdacc002875bcb02a799d9156c6aa6bcbe0838926"}
+    },
+    "6": {
+      "wasm": {"path": ".artifacts/semaphore/4.13.0/semaphore-6.wasm",
+               "url": "https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-6.wasm",
+               "sha256": "432293aa5c8e7d503148824ff17a8ad7318058a656af568837f30675d867827e"},
+      "zkey": {"path": ".artifacts/semaphore/4.13.0/semaphore-6.zkey",
+               "url": "https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-6.zkey",
+               "sha256": "24a7ef2c7f4c809a502e876cb3295535a73710ec7bc3827b5a15018e434a674a"}
+    },
+    "7": {
+      "wasm": {"path": ".artifacts/semaphore/4.13.0/semaphore-7.wasm",
+               "url": "https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-7.wasm",
+               "sha256": "3ba75768d5dfbee9d52b732b69eefb1725c8c356a3de9c2f2a71dbc401a0ea61"},
+      "zkey": {"path": ".artifacts/semaphore/4.13.0/semaphore-7.zkey",
+               "url": "https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-7.zkey",
+               "sha256": "d77851ee4bd496c6b5f70fbfa550f113a89bad972efd4c541267e566163d0600"}
     }
   }
 }

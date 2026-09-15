@@ -36,7 +36,9 @@ adds on top of that, not just measure end-to-end linkability.
 - **Kill condition**: measured effects reduce entirely to known address
   reuse / trivial account equality / ordinary application leakage, with no
   ERC-4337-specific boundary (`research-plan.md` §3, D1).
-- **Status**: open. D1 pilot (2026-09-15, `docs/d1-pilot-results.md`): every measured
+- **Status**: **closed as the primary direction (2026-09-15, `docs/decision-log.md`)**; the
+  falsification phase is complete (`docs/d1-b4-results.md`, `docs/d1-s1b-results.md`) and D1
+  is frozen. D1 pilot (2026-09-15, `docs/d1-pilot-results.md`): every measured
   non-trivial linkage reduced to account equality (R1 already in T; B3 R2 by account-level
   Bootstrap → Spend) or ordinary timing correlation; gas/proof metadata added nothing —
   kill condition met for the tested questions, pending an equality-free issuance design.
@@ -52,7 +54,15 @@ adds on top of that, not just measure end-to-end linkability.
 - **Kill condition**: routine historical-root retention / staking fixes
   eliminate the problem at realistic load with no significant tradeoff —
   then this is engineering, not research (`research-plan.md` §3, D2).
-- **Status**: open, treated as fallback unless RQ1 is killed.
+- **Status**: **primary direction since 2026-09-15.** Pilot complete on the frozen B3
+  specimen (`docs/d2-pilot-results.md`, batch `20260915T223607Z`): a Spend valid at bundler
+  simulation fails on chain (`AA33` / `RootMismatch`) when an unrelated Bootstrap mirrors a new
+  root; stale probability follows 1 − exp(−λ·T) with no pool-size effect; failures are
+  perfectly correlated across concurrent spenders and across a bundle; bundler-side
+  re-simulation removes ≈ 67 % of on-chain failures but not the submission→inclusion residue;
+  separately, the frozen Bootstrap `callGasLimit` covers only tree size 0. D2 case **D**
+  (both root contention and gas scaling matter). No defense designed; the kill condition
+  (bounded root history removes it at realistic load with no tradeoff) is **not yet tested**.
 
 ## RQ3 (D3 — fallback B): Private actual-cost gas settlement
 

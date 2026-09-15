@@ -12,7 +12,8 @@ ENTRYPOINT_VERSION ?= unset
         recorder-test recorder-examples recorder-selfcheck recorder-docs \
         baselines-build baselines-test run-matched-baselines calibrate-pvg \
         b3-eval-build b3-prover-install b3-eip170-test run-b3-evaluation \
-        d1-test d1-pilot-run d1-pilot-attack d1-registry-docs d1-b4-run d1-b4-attack d1-s1b-run d1-s1b-attack
+        d1-test d1-pilot-run d1-pilot-attack d1-registry-docs d1-b4-run d1-b4-attack d1-s1b-run d1-s1b-attack \
+        d2-test d2-pilot-run d2-pilot-analyze
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
@@ -28,7 +29,7 @@ install: ## Verify required tooling is present (no app dependencies exist yet)
 	@echo "(no contracts/circuits/app code has been added — see docs/decision-log.md)."
 	@echo "Run 'make env-report' for the full version report."
 
-test: scaffold-test recorder-test b3-eip170-test baselines-test d1-test ## Run the full test suite
+test: scaffold-test recorder-test b3-eip170-test baselines-test d1-test d2-test ## Run the full test suite
 
 .PHONY: scaffold-test
 scaffold-test: ## Repository-layout and gitignore self-checks
@@ -182,6 +183,18 @@ run-local-experiment: ## Run one experiment locally: make run-local-experiment I
 	 } > "$$run_dir/metadata.json"; \
 	 scripts/env-report.sh > "$$run_dir/env-report.txt"; \
 	 echo "Wrote $$run_dir/metadata.json and $$run_dir/env-report.txt"
+
+# --- D2 pilot: validation-state contention and liveness of frozen B3 (docs/d2-pilot-results.md)
+d2-test: b3-eval-build b3-prover-install ## D2 pilot: static + live tests (race, classification, frozen Bootstrap limit, depth-6 proof)
+	@python3 -m unittest discover -s experiments/liveness/d2/tests -t .
+
+d2-pilot-run: baselines-build b3-eval-build b3-prover-install ## Run the D2 pilot experiments: make d2-pilot-run BATCH=<utc stamp> [EXP=all]
+	@if [ -z "$(BATCH)" ]; then echo "ERROR: BATCH is required"; exit 1; fi
+	@python3 -u -m experiments.liveness.d2 run --batch $(BATCH) $(foreach e,$(or $(EXP),all),--exp $(e))
+
+d2-pilot-analyze: ## Tables, statistics, figures and the generated block of docs/d2-pilot-results.md: make d2-pilot-analyze BATCH=<stamp>
+	@if [ -z "$(BATCH)" ]; then echo "ERROR: BATCH is required"; exit 1; fi
+	@python3 -m experiments.liveness.d2 analyze --batch $(BATCH) --write-doc
 
 clean: ## Remove local, regenerable artifacts (does not touch data/private)
 	@echo "Cleaning regenerable artifacts..."

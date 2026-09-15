@@ -790,3 +790,70 @@ Format for each entry:
 - **Stated expectation (HYPOTHESIS, recorded before data)**: the registered timing attacks
   read only issuance / redemption order and time, which S1b keeps with S1's model, so S1b
   should reproduce S1's registered-attack linkage within sampling error.
+
+## 2026-09-15: D1 falsification phase closed; D2 is the primary direction
+
+- **Decision**: D1 (privacy limits of stealth-account gas sponsorship) is closed as the primary
+  research direction. Its models, attacks, datasets and docs (`docs/d1-*.md`,
+  `experiments/privacy/d1`, `experiments/workloads/d1`) are frozen; they are changed only for
+  API compatibility and rerun only as regression tests. D2 (validation-state contention and
+  liveness) becomes the primary direction, starting with a falsification pilot of the frozen
+  B3 specimen (`docs/d2-pilot-results.md`).
+- **Why**: the completed D1 experiments met the D1 kill condition (`docs/d1-s1b-results.md`):
+  B3's deterministic linkage is same-account Bootstrap/Spend; cross-account redemption removes
+  it (clean linkage at chance); correlated issuance→redemption timing stays linkable; no
+  ERC-4337-, Paymaster-, gas- or proof-specific feature added measurable linkage.
+- **Alternatives considered**: D3 (private actual-cost settlement) — deferred; D2 is the
+  fallback whose question the existing harness can already test on the unmodified specimen.
+
+## 2026-09-15: D2 pilot design (recorded before the stochastic / policy / adversary data)
+
+- **No B3 change.** Frozen contracts via the unchanged W1 setup on `b3_compat_local`; no root
+  history, epochs, reservations, locking, Paymaster or Semaphore change. Bundler policies P1/P2
+  are experimental bundler behaviour, not protocol defenses.
+- **Two phenomena, separate code paths and tables.** D2-A root contention
+  (`experiments/liveness/d2/{harness,engine,exp_a}.py`) and D2-B Bootstrap gas scaling
+  (`exp_b.py`).
+- **Staged bundler.** `StagedBundler` splits the W1 bundler's atomic simulate+submit so a
+  Bootstrap can land between simulation and inclusion; same simulation method, fee pinning,
+  beneficiary and EOA. Bundles may contain several ops; bundle gas = Σ op limits + 100,000 per op.
+- **Virtual clock, real chain.** Stage durations (T_prove, T_submit, T_sim, T_queue, T_chain) are
+  controlled virtual seconds; root-changing arrivals are real frozen-B3 Bootstraps executed at
+  their virtual position (arrivals before a checkpoint are mined before its chain action;
+  arrivals in (t7, t8) are mined before the bundle — a modelling assumption). Poisson arrivals
+  seeded per trial index, shared across P0/P1/P2 (paired). Only the `measured` experiment lets
+  real proof time drive the clock.
+- **Trial isolation by `evm_snapshot`/`evm_revert`**; snapshots never price anything.
+- **Proof reuse.** Identical proof inputs (identity, member list, userOpHash, depth) reuse the
+  first real proof within one chain; the attempt carries that proof's measured time and
+  `proof_cache_hit`. A real client would generate one proof per attempt; "proofs per success"
+  counts attempts, not cache misses.
+- **Spend preVerificationGas** priced once with an all-non-zero 416-byte placeholder proof (covers
+  every real proof's calldata; surplus recorded) so the userOpHash — which excludes the proof —
+  is fixed before proving; every retry proves over the same hash and the account signature is
+  unchanged (checked on every attempt).
+- **Bootstrap callGasLimit.** D2-A uses an experimental 1,000,000 for every Bootstrap (initial
+  pools, contenders, adversary); the frozen 160,000 (`b3-eval-config.json`, unchanged) cannot
+  build a tree beyond one member (measured in D2-B). D2-B measures the frozen value at every
+  tree size and separately uses an experimental 1,500,000 to keep growing the tree. Neither
+  experimental value is reported as the frozen baseline or as a fix; both respect
+  BootstrapPaymaster's 0.005 ETH cap at the W1 fee (tested).
+- **D2 setup top-ups** (not B3): the faucet funds the bundler and sponsor operator with 50 ETH and
+  each B3 Paymaster deposit gets +20 ETH via `EntryPoint.depositTo`, because one chain sponsors
+  hundreds of operations.
+- **Records.** D2 attempts are not written into the linkage recorder's streams (no hidden
+  relation, no labels). Every D2 field has a tier in `experiments/liveness/d2/records.py`
+  (control / client_private / A2 / A0 / derived); unclassified fields are refused. Attempt
+  records (with client-private proof timing) go to `data/private/d2-pilot/`; aggregates to
+  `results/d2-pilot/`. D2 seeds are recorded in the clear (no linkage labels exist).
+- **Semaphore artifacts depths 6–7** pinned by first-download sha256 (same precedent as depths
+  2–5); a depth-6 proof verifies on chain against the frozen `SemaphoreVerifier`
+  (`experiments/liveness/d2/tests/test_live.py`).
+- **Adversary.** Only an A2 observer exists in this harness (no public mempool): the adversary is
+  the bundler operator or a party fed its simulation results, depositing 0.05 s after a
+  simulation acceptance, with honest λ = 0. No A0/A1 targeted schedule is modelled because no
+  A0/A1 observer can see a pending Spend here.
+- **Stop conditions checked in code**: proof root ≠ recorded root (raises); classification
+  inconsistent with the root timeline (`consistent = False`, counted); included Spend without
+  nonce advance or failed Spend with nonce advance (raises); capacity exhaustion recorded as
+  `HARNESS_CAPACITY_EXCEEDED`, never truncated.
