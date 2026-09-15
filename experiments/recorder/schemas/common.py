@@ -237,7 +237,7 @@ def envelope_fields(*, scenario_nullable: bool) -> Tuple[FieldSpec, ...]:
                   "0-based position of this row within its stream for this run."),
         FieldSpec("baseline_id", _check_baseline_id, CLASS_PUBLIC, "A0",
                   "Which baseline produced the row (B0, B1, B2-Allowlist, "
-                  "B2-Signature, B3..B6). The experimental "
+                  "B2-Signature, B3-PrivGas-v1, B4..B6). The experimental "
                   "condition, known to the attacker by construction."),
         FieldSpec("workload_id", _check_workload_id, CLASS_PUBLIC, "A0",
                   "Canonical workload (docs/research-plan.md Sec. 4): W1-cold "

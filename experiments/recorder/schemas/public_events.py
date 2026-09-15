@@ -72,6 +72,8 @@ EVENT_TYPES = (
     "paymaster_event",          # paymaster-emitted log (e.g. allowlist change) or its stake/withdraw
     "entrypoint_deposit",       # EntryPoint Deposited log: an account's or paymaster's deposit credited
     "privacy_pool_event",       # commitment insert / root update / nullifier use
+    "stealth_announcement",     # an ERC-5564-style announcement log naming a stealth account
+    "sponsorship_eligibility",  # a contract records that an account may be sponsored
 )
 
 CALLDATA_CLASSES = (
@@ -87,6 +89,10 @@ CALLDATA_CLASSES = (
     "paymaster_deposit",
     "pool_deposit",
     "pool_redeem",
+    "pool_root_update",         # a credit-pool root mirrored into a Paymaster
+    "stealth_announce_and_fund",  # AnnouncementRegistry.announceAndFund (B3 Stage 1)
+    "fee_burn",                 # native value sent to address(0) as a non-refundable fee
+    "paymaster_sponsorship",    # a Paymaster's own log that it sponsored an account
     "other",
 )
 
@@ -104,8 +110,10 @@ TRACE_PHASES = ("infrastructure", "funding", "authorization", "application",
 #: event_type -> {calldata_class -> allowed phases}; key None = any other class.
 TRACE_PHASE_RULES = {
     "eoa_transaction": {"contract_creation": ("infrastructure",),
-                        "entrypoint_handle_ops": ("settlement",)},
-    "native_transfer": {None: ("funding",)},
+                        "entrypoint_handle_ops": ("settlement",),
+                        "stealth_announce_and_fund": ("funding",)},
+    # Burning a non-refundable admission fee buys eligibility; it funds nothing.
+    "native_transfer": {"fee_burn": ("authorization",), None: ("funding",)},
     # A token Transfer is an application event, except a mint emitted by the
     # token's own contract-creation transaction.
     "asset_transfer": {None: ("application", "infrastructure")},
@@ -115,8 +123,15 @@ TRACE_PHASE_RULES = {
     "entrypoint_deposit": {None: ("funding",)},
     "paymaster_event": {"paymaster_deposit": ("funding",),
                         "paymaster_policy": ("authorization",),
+                        "paymaster_sponsorship": ("authorization",),
                         None: ("infrastructure",)},
-    "privacy_pool_event": {None: ("funding", "authorization", "settlement")},
+    # 5.0.0: one phase per pool class; a privacy_pool_event without a pool
+    # class is rejected (no content-free fallback).
+    "privacy_pool_event": {"pool_deposit": ("funding",),
+                           "pool_root_update": ("authorization",),
+                           "pool_redeem": ("authorization",)},
+    "stealth_announcement": {None: ("authorization",)},
+    "sponsorship_eligibility": {None: ("authorization",)},
 }
 
 OUTCOMES = ("success", "reverted", "not_included", "unknown")
@@ -277,7 +292,11 @@ def _rule_inclusion_consistency(record: Mapping[str, Any], stream: str) -> None:
 def derive_trace_phase(event_type: str, calldata_class: Any) -> str:
     """The default (first allowed) phase for a row's public content."""
     rules = TRACE_PHASE_RULES[event_type]
-    return rules.get(calldata_class, rules.get(None))[0]
+    allowed = rules.get(calldata_class, rules.get(None))
+    if allowed is None:
+        raise ValueError(f"no trace_phase is derivable for event_type {event_type!r} "
+                         f"with calldata_class {calldata_class!r}")
+    return allowed[0]
 
 
 def _rule_trace_phase_is_content_derived(record: Mapping[str, Any], stream: str) -> None:
@@ -475,9 +494,12 @@ SCHEMA = StreamSchema(
         FieldSpec("trace_phase", check_enum, CLASS_PUBLIC, "A0",
                   "Coarse content-derived classification: infrastructure "
                   "(deployments), funding (native value into an account or "
-                  "EntryPoint deposit), authorization (paymaster policy calls), "
-                  "application (asset transfers), settlement (bundles and "
-                  "UserOperation outcomes). A deterministic function of "
+                  "EntryPoint deposit; a stealth announce-and-fund call; a credit "
+                  "pool deposit), authorization (paymaster policy calls, sponsorship "
+                  "and eligibility logs, stealth announcements, fee burns, pool root "
+                  "updates and credit redemptions), application (asset transfers), "
+                  "settlement (bundles and UserOperation outcomes). A deterministic "
+                  "function of "
                   "event_type and calldata_class, never a role or intent label; "
                   "whether a row lies in a measured cost window is recorded "
                   "privately, not here. Added in 4.0.0 so the complete public "

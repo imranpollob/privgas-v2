@@ -1,0 +1,32 @@
+{
+  "_comment": "Content digests of every frozen B3 source tree that baselines/b3_eval compiles (read-only remappings into the pinned submodule). Algorithm: experiments/workloads/w1/artifacts.py dependency_tree_digest. Checked by experiments/workloads/w1/tests/test_b3_live.py. If this fails, the B3 specimen changed: B3-PrivGas-v1 results no longer describe the frozen protocol.",
+  "b3_submodule_commit": "02a3f0abdb979446545aa87149080bfb44e43a3e",
+  "trees": {
+    "b3-src": {
+      "path": "baselines/b3_privgas_v1/src",
+      "tree_sha256": "4b5e4fc11e57370a4a16d0e6c29e3337bfd66968845b95af8472073efff81ce6"
+    },
+    "semaphore-contracts": {
+      "path": "baselines/b3_privgas_v1/lib/semaphore/packages/contracts/contracts",
+      "tree_sha256": "ed349631e32a1565081b53b09e2c28716168e343680a943fa93339cc59f870a5"
+    },
+    "lean-imt": {
+      "path": "baselines/b3_privgas_v1/lib/zk-kit.solidity/packages/lean-imt/contracts",
+      "tree_sha256": "f8fd00a4b8909c696faecc405ee1fe011e6812a2c92a759d5e3b8b7a34d3740b"
+    },
+    "poseidon-solidity": {
+      "path": "baselines/b3_privgas_v1/lib/poseidon-solidity",
+      "tree_sha256": "ae817575f137b6632f8ab8243d83a35a6120247db8878863da4b8e6f764bbd32"
+    },
+    "account-abstraction": {
+      "path": "baselines/b3_privgas_v1/lib/account-abstraction/contracts",
+      "tree_sha256": "d810ee6a8ec4238f9c9f04ba18cc10e43b3e49a1962e8088493921c5feba50cb"
+    }
+  },
+  "files": {
+    "MockAnnouncer.sol": {
+      "path": "baselines/b3_privgas_v1/test/mock/MockAnnouncer.sol",
+      "sha256": "8542de3b03aa219cf7fc0a97c82bb3c5f276ae7b5cf39acd45afd4d238df1175"
+    }
+  }
+}

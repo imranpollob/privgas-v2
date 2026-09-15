@@ -537,3 +537,85 @@ Format for each entry:
   the account → `AA34`, each after an accepted control. The signature
   mechanism is unchanged. The 0/0 validity window is kept (a finite window
   would add a timing feature before D1). No B2 warm variants are added.
+
+## 2026-09-15: The frozen B3 specimen is measured as `B3-PrivGas-v1` on a labelled evaluation profile
+
+- **Decision**: make the unmodified PrivGas v1 contracts observable under W1 by
+  running them on a separate local chain profile, `b3_compat_local` (anvil
+  `--code-size-limit 32768`), labelled NON-PRODUCTION,
+  NON-EIP-170-DEPLOYABLE-AS-BUILT, PRIVACY-EVALUATION-ONLY. The frozen sources
+  are compiled read-only from `baselines/b3_eval` (executable bytecode equal to
+  the submodule's own build) and deployed in the frozen fixture's order. The
+  recorder baseline id is `B3-PrivGas-v1` (schema 5.0.0); it names the
+  unmodified specimen at `02a3f0ab…`, and a changed protocol would need a new id.
+  `docs/b3-evaluation.md`.
+- **Why not "the smallest explicit fix"** (`docs/research-plan.md` §15 gate): any
+  source fix — linking a pre-deployed canonical PoseidonT3, inlining, a smaller
+  hash — would change what is measured or introduce an unverified dependency.
+  D1 measures privacy traces, which do not depend on the code-size limit; the
+  limit is raised only on a chain that is explicitly not a deployment target,
+  and `docs/b3-reproduction.md`'s ordinary deployability finding stands and is
+  re-checked live.
+- **Matched comparisons**: every baseline run on the profile gets the identical
+  setup, B3 contracts included, so B3 is not fingerprinted by chain
+  configuration. Measured: B0/B1 cold/B1 warm/B2-Allowlist/B2-Signature have
+  identical workflow transactions, UserOperation fields, calibrated overheads
+  and cost summaries on both profiles (`compare.profile_effect`).
+- **Not done, deliberately**: no staking API, no ERC-7562 claim, no production
+  bundler claim, no Poseidon/Merkle/CreditPool change, no root history, no B4/B5,
+  no attacks.
+
+## 2026-09-15: B3 W1-cold workflow choices
+
+- **Account deployment in Bootstrap via initCode.** The paper models a
+  counterfactual account deployed on first use; `BootstrapPaymaster` does not
+  inspect initCode. The Bootstrap operation therefore deploys the same
+  counterfactual `SimpleAccount` B1/B2 use; B3's Spend operation (the W1
+  application call, byte-identical to B1/B2) carries no initCode. Recorded as an
+  unavoidable fairness difference.
+- **Same public sender for Bootstrap and Spend.** The source lets any address
+  spend, but in W1 the tokens and the Bootstrap eligibility sit at the announced
+  account, so Spend comes from it. The equality is recorded as mined and not
+  normalised.
+- **Parameters from the frozen source**: vMin 0.01 ETH, F 0.021 ETH, scheme id 1,
+  Spend Paymaster verification limit 400,000 (fixture value). From traces:
+  Bootstrap call gas 160,000 (126k used; below the 40k unused-gas penalty
+  threshold), Bootstrap Paymaster verification 60,000 (the shared W1 value; 27k
+  used). `MockAnnouncer` is B3's own announcer. Ephemeral public key seed-derived;
+  metadata empty (B3 implements no ERC-5564 derivation).
+- **1 wei to `address(0)` in the compat setup**: otherwise B3's fee burn pays a
+  devnet-only 25,000-gas new-account charge (measured 178,789 vs 153,789 gas).
+- **Real proofs**: `@semaphore-protocol/core` 4.14.2 (the version B3's fixture
+  scripts use), Semaphore artifacts 4.13.0 pinned by sha256; one deterministic
+  witness from the secret seed; the proof is regenerated at each PVG fixed-point
+  step because PVG changes `userOpHash`.
+
+## 2026-09-15: preVerificationGas overhead is net of the execution refund; shapes keyed by call
+
+- **Finding**: B3's Bootstrap operation calibrated to O = 19,776 gas against
+  14,985 for every W1 application call. Transferring `amount − 1` instead of the
+  whole balance raises B2-Signature's O to 19,785 — exactly the EIP-3529 4,800-gas
+  SSTORE-clear refund the W1 transfer earns. O is therefore EntryPoint overhead
+  net of the executed call's refund, not an EntryPoint constant.
+- **Decision**: key the artifact by executed call: `execute_call` (W1 application
+  call, including B3 Spend), `execute_pool_deposit` (B3 Bootstrap),
+  `empty_calldata`. One artifact per evaluation profile; the profile id and
+  code-size limit join the fingerprint. The standard artifact's values and
+  dry-run gas are unchanged.
+
+## 2026-09-15: Schema 5.0.0
+
+- **Decision**: `baseline_id` `B3` → `B3-PrivGas-v1`; B3 public event types and
+  calldata classes with deterministic trace phases; R2 public anchors
+  (`issuance_transaction_hash`, `issuance_userop_hash`, `credit_commitment`,
+  `credit_nullifier`) required for an observed R2 label and forbidden without a
+  credit system; B3 records a Spend row (R2 observed) and a Bootstrap row (R2
+  absent). `docs/experiment-schema.md` §9.0.
+- **Data**: B0–B2 re-recorded with the same private seed; every transaction hash
+  and cost summary value matched the 4.0.0 runs, which were then moved (not
+  deleted) to `data/private/archive/schema-4.0.0/`.
+- **Also found and fixed**: the profile dict used a bare `labels` key, which the
+  recorder's public-output denylist rejects (caught by the leakage self-check);
+  renamed `profile_labels`. The Semaphore proof encoding is 416 bytes (13 words),
+  not 448.
+

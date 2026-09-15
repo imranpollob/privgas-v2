@@ -204,7 +204,7 @@ def _payer_kind(baseline_id: str) -> str:
 def ground_truth(baseline_id: str = "B0", seq: int = 0, **overrides
                  ) -> Dict[str, Any]:
     row = envelope("ground_truth", seq, baseline_id)
-    has_credit = baseline_id in ("B3", "B4", "B5", "B6")
+    has_credit = baselines.get(baseline_id).uses_credit_system
     row.update({
         "seed": 424242,
         "subject_kind": "operation",
@@ -231,6 +231,10 @@ def ground_truth(baseline_id: str = "B0", seq: int = 0, **overrides
             "established_wallet_address": PAYMASTER,
             "transaction_hash": HASH_A,
             "userop_hash": HASH_B,
+            "issuance_transaction_hash": HASH_C if has_credit else None,
+            "issuance_userop_hash": HASH_C if has_credit else None,
+            "credit_commitment": HASH_A if has_credit else None,
+            "credit_nullifier": HASH_B if has_credit else None,
             "public_event_record_ids": [],
         },
     })

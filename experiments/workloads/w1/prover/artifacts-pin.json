@@ -1,0 +1,15 @@
+{
+  "_comment": "Semaphore v4 trusted-setup artifacts used to generate real B3 proofs. URLs are exactly those @zk-kit/artifacts 2.0.1 resolves for @semaphore-protocol/proof 4.14.2 (maybeGetSnarkArtifacts(Project.SEMAPHORE, {parameters: [depth], version: '4.13.0'})). Files are downloaded into .artifacts/ (gitignored) and refused unless their sha256 matches. On-chain verification uses B3's vendored SemaphoreVerifier.sol, whose verification key must agree with these artifacts (a mismatch makes the on-chain verification fail, which the live tests would catch).",
+  "semaphore_core_version": "4.14.2",
+  "semaphore_artifact_version": "4.13.0",
+  "artifacts": {
+    "1": {
+      "wasm": {"path": ".artifacts/semaphore/4.13.0/semaphore-1.wasm",
+               "url": "https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-1.wasm",
+               "sha256": "70289ef3bdfa86e97debdb227e76721b392f45b5e73d5e7136d93a04dce0dff9"},
+      "zkey": {"path": ".artifacts/semaphore/4.13.0/semaphore-1.zkey",
+               "url": "https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-1.zkey",
+               "sha256": "471a978875f91411b21ba5a2fbea41df30ec45eb23e3ac045edf7f30a2846a08"}
+    }
+  }
+}

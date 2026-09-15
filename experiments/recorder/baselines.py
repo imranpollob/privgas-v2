@@ -12,8 +12,10 @@ baseline uses and makes no claim about any baseline's privacy properties.
 
 Status: B0, B1, B2-Allowlist and B2-Signature are implemented in ``baselines/w1_b0_b2`` (runner:
 ``experiments/workloads/w1``) and their rows were confirmed against real runs
-on 2026-09-14 -- the capability flags held; see docs/w1-baselines.md. B3 is the
-frozen specimen. B4-B6 rows still encode docs/research-plan.md Sec. 5, not an
+on 2026-09-14 -- the capability flags held; see docs/w1-baselines.md.
+B3-PrivGas-v1 is the frozen specimen ``baselines/b3_privgas_v1``, measured
+unmodified on the ``b3_compat_local`` evaluation profile (docs/b3-evaluation.md);
+its row was confirmed against those real runs (schema 5.0.0). B4-B6 rows still encode docs/research-plan.md Sec. 5, not an
 implementation. If an implemented baseline turns out to differ, the fix is to
 update this table together with a docs/decision-log.md entry, not to relax
 the validator ad hoc.
@@ -78,10 +80,16 @@ _TABLE: Dict[str, BaselineCapabilities] = {
         "B1 (baselines/w1_b0_b2).",
         implemented_in_repo=True,
     ),
-    "B3": BaselineCapabilities(
-        "B3", True, True, True, True, True,
-        "PrivGas v1 as published, frozen specimen "
-        "(baselines/b3_privgas_v1, see docs/b3-reproduction.md).",
+    # Schema 5.0.0: renamed from "B3". The id names the UNMODIFIED specimen at
+    # commit 02a3f0abdb979446545aa87149080bfb44e43a3e; a changed protocol would
+    # need a new id.
+    "B3-PrivGas-v1": BaselineCapabilities(
+        "B3-PrivGas-v1", True, True, True, True, True,
+        "PrivGas v1 frozen specimen (baselines/b3_privgas_v1 @ 02a3f0ab, unmodified): "
+        "AnnouncementRegistry fund, BootstrapPaymaster-sponsored CreditPool deposit, "
+        "CreditPaymaster-sponsored spend with a real Semaphore v4 / Groth16 proof. "
+        "Evaluated only on the NON-PRODUCTION b3_compat_local profile (frozen "
+        "PoseidonT3 exceeds EIP-170; docs/b3-reproduction.md, docs/b3-evaluation.md).",
         implemented_in_repo=True,
     ),
     "B4": BaselineCapabilities(

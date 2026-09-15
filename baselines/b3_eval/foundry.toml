@@ -1,0 +1,24 @@
+# EVALUATION-ONLY Foundry project for the frozen B3 (PrivGas v1) specimen.
+#
+#   NON-PRODUCTION | NON-EIP-170-DEPLOYABLE-AS-BUILT | PRIVACY-EVALUATION-ONLY
+#
+# Nothing here modifies baselines/b3_privgas_v1 (pinned submodule, commit
+# 02a3f0abdb979446545aa87149080bfb44e43a3e). This project only COMPILES the
+# frozen sources, read-only through remappings, with compiler settings
+# identical to the submodule's own foundry.toml, so the live evaluation can
+# deploy them on the b3_compat_local anvil profile (docs/b3-evaluation.md).
+# PoseidonT3 (29,315 runtime bytes) still exceeds EIP-170; that finding in
+# docs/b3-reproduction.md is unchanged.
+[profile.default]
+src = "src"
+out = "out"
+libs = []
+test = "test"
+solc = "0.8.28"
+via_ir = true
+optimizer = true
+optimizer_runs = 200
+allow_paths = ["../b3_privgas_v1"]
+
+[lint]
+lint_on_build = false

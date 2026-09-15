@@ -1,6 +1,6 @@
 # Baseline specification
 
-Status: **B0, B1, B2-Signature and auxiliary B2-Allowlist implemented, hardened and R1-refined (2026-09-14, `docs/w1-baselines.md`); workloads W1-cold (primary) and W1-warm (ablation); B3 frozen specimen; B4–B6 not implemented.**
+Status: **B0, B1, B2-Signature and auxiliary B2-Allowlist implemented, hardened and R1-refined (2026-09-14, `docs/w1-baselines.md`); workloads W1-cold (primary) and W1-warm (ablation); B3 frozen specimen, measured unmodified as `B3-PrivGas-v1` on the NON-PRODUCTION `b3_compat_local` evaluation profile (2026-09-15, `docs/b3-evaluation.md`); B4–B6 not implemented.**
 
 `baselines/` holds reference implementations that experiments compare
 against — e.g., an unmodified/standard flow with no privacy or gas
@@ -28,7 +28,7 @@ A baseline must:
 
 | ID | Directory | Represents | Added (commit) |
 |----|-----------|------------|-----------------|
-| B3 | `baselines/b3_privgas_v1` (git submodule, pinned `02a3f0ab...e43a3e`) | The accepted PrivGas v1 implementation, reproduced as faithfully as possible — evaluated as a specimen, not improved. See `docs/b3-reproduction.md` for test results, dependency/version provenance, and a documented ordinary-key deployment failure (PoseidonT3 exceeds EIP-170). | (this repo's next commit) |
+| B3 / **B3-PrivGas-v1** | `baselines/b3_privgas_v1` (git submodule, pinned `02a3f0ab...e43a3e`, unmodified); evaluation build `baselines/b3_eval` (compile-only) + runner `experiments/workloads/w1` | The accepted PrivGas v1 implementation, reproduced as faithfully as possible — evaluated as a specimen, not improved. See `docs/b3-reproduction.md` for test results, dependency/version provenance, and a documented ordinary-key deployment failure (PoseidonT3 exceeds EIP-170). Recorder baseline id `B3-PrivGas-v1` (schema 5.0.0): the unmodified contracts measured under W1-cold (Fund → Bootstrap deploying the same SimpleAccount → Spend with a real Semaphore/Groth16 proof performing the W1 application call) **only** on the `b3_compat_local` profile (anvil `--code-size-limit 32768`; NON-PRODUCTION, NON-EIP-170-DEPLOYABLE-AS-BUILT, PRIVACY-EVALUATION-ONLY). Paymasters unstaked; no ERC-7562 enforcement. Tiers: A0, A2. Honest: node, bundler, sponsor operator, prover. A changed protocol would need a new id. `docs/b3-evaluation.md`. | 02a3f0ab (import); B3-PrivGas-v1 uncommitted, 2026-09-15 |
 | B0 | `baselines/w1_b0_b2` (shared project) + runner `experiments/workloads/w1` | Sender-funded fresh EOA: the asset sender sends the ERC-20 and exactly the action transaction's max fee in ETH; the EOA performs the ERC-20 transfer. Workload W1-cold only. Tiers: A0. Honest: local node. | (uncommitted, 2026-09-14) |
 | B1 | same | Sender-funded eth-infinitism `SimpleAccount` v0.9.0 (EntryPoint v0.9.0, commit `b36a1ed5`); the sender sends the EntryPoint required prefund; no Paymaster. W1-cold (the op deploys the account) and W1-warm (ablation; account pre-deployed). Tiers: A0, A2 (no A1). Honest: node, bundler. | (uncommitted, 2026-09-14) |
 | B2-Signature | same | **Primary ordinary-Paymaster baseline.** Same account, EntryPoint, bundler and application call as B1, plus `SignatureVerifyingPaymaster`: sponsors an op carrying the sponsor's ECDSA signature over the EntryPoint `userOpHash` (v0.9.0 paymaster-signature suffix); no on-chain authorization transaction. W1-cold. Tiers: A0, A2. Honest: node, bundler, sponsor. | (uncommitted, 2026-09-14) |
@@ -50,7 +50,15 @@ recorder and are not measurements — see `docs/experiment-schema.md` §10.
 For every baseline, R1's hidden answer is the *economic funding source* (the
 wallet that funded the gas-paying balance), while the *immediate gas payer*
 (EOA balance, SimpleAccount deposit, Paymaster deposit) is public context; see
-`docs/w1-baselines.md` §7 and `docs/experiment-schema.md` §5.0.
+`docs/w1-baselines.md` §7 and `docs/experiment-schema.md` §5.0. For
+B3-PrivGas-v1 both operations are charged to a B3 Paymaster deposit funded by the
+sponsor wallet; R2 (issuance ↔ redemption) is defined only for it
+(`docs/b3-evaluation.md` §8).
+
+**Matched D1 comparisons that include B3 must use runs from the same evaluation
+profile** (`experiment_id` prefix `baselines/b3-compat-local/`). On that profile
+the setup of every baseline also deploys the B3 contracts; measured workflow
+quantities of B0–B2 are identical to the `eip170_standard` runs.
 
 B0/B1/B2-Allowlist/B2-Signature deviate from criterion 1 above in one respect: they run through
 `make run-matched-baselines SEED=<seed>` (which records event streams and a

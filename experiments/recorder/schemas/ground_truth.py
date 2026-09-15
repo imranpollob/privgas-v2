@@ -204,7 +204,18 @@ PUBLIC_ANCHOR_FIELDS = {
     "established_wallet_address": check_address,
     "transaction_hash": check_hash32,
     "userop_hash": check_hash32,
+    # 5.0.0 -- R2 join bridge. Public on-chain values (issuance bundle / op, the
+    # deposited commitment, the revealed nullifier). WHICH issuance a redemption
+    # consumed is the secret; these anchors live only in this private stream.
+    "issuance_transaction_hash": check_hash32,
+    "issuance_userop_hash": check_hash32,
+    "credit_commitment": check_hash32,
+    "credit_nullifier": check_hash32,
 }
+
+#: Anchors that exist only where a credit lifecycle exists.
+CREDIT_ANCHOR_FIELDS = ("issuance_transaction_hash", "issuance_userop_hash",
+                        "credit_commitment", "credit_nullifier")
 
 
 def _check_public_anchors(value, *, field, stream):
@@ -282,6 +293,26 @@ def _rule_credit_fields_match_relation_r2(record: Mapping[str, Any],
                 "rather than 'not_applicable'",
                 stream=stream, field="issuance_to_redemption_label",
                 code="baseline_capability_violation")
+
+    anchors = record.get("public_anchors")
+    if not isinstance(anchors, dict):
+        return
+    if not has_credit:
+        offenders = [k for k in CREDIT_ANCHOR_FIELDS if anchors.get(k) is not None]
+        if offenders:
+            raise RecordValidationError(
+                f"baseline {caps.baseline_id} has no credit lifecycle, so credit "
+                f"anchors {offenders} must be null",
+                stream=stream, field=f"public_anchors.{offenders[0]}",
+                code="baseline_capability_violation")
+    elif isinstance(r2, dict) and r2.get("status") == "observed":
+        missing = [k for k in CREDIT_ANCHOR_FIELDS if anchors.get(k) is None]
+        if missing:
+            raise RecordValidationError(
+                "an observed R2 label needs the public issuance and redemption "
+                f"anchors {missing} (the post-freeze join bridge)",
+                stream=stream, field=f"public_anchors.{missing[0]}",
+                code="label_inconsistent")
 
 
 def _rule_payer_kind_matches_baseline(record: Mapping[str, Any], stream: str) -> None:

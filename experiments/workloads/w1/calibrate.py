@@ -2,14 +2,17 @@
 the reproducible artifact experiment runs price preVerificationGas with.
 
     python3 -m experiments.workloads.w1.calibrate --seed 910001 --seed 910002
+    python3 -m experiments.workloads.w1.calibrate --profile b3_compat_local --seed 910001 --seed 910002
 
 For every AA variant and every seed, run the exact-bundle snapshot dry run
 (``pvg_mode="dry_run"``, method ``break_even_calibration_v1``), collect O per
 operation shape, and require one value per shape across every variant and
 seed; also require the environment fingerprint to be identical and the
-resulting runs to reconcile with no bundler subsidy. Writes
-``baselines/w1_b0_b2/calibration/pvg-overhead.json`` (committable: no seed,
-no role, no address).
+resulting runs to reconcile with no bundler subsidy. Writes one artifact per
+evaluation profile: ``baselines/w1_b0_b2/calibration/pvg-overhead.json``
+(``eip170_standard``) or ``pvg-overhead.<profile>.json`` (committable: no seed,
+no role, no address). On ``b3_compat_local`` the AA variants include
+B3-PrivGas-v1's Bootstrap and Spend operations (real proofs).
 
 Calibration seeds are calibration-only; the artifact records only their
 commitments. Do not reuse them for experiment runs.
@@ -28,26 +31,37 @@ from ...recorder.digest import commit_to_value
 from ...recorder.provenance import repo_root
 from . import calibration
 from .accounting import reconcile
+from . import b3, profiles
 from .artifacts import forge_build
-from .config import EXPERIMENT_IDS, load_config
+from .config import STANDARD_PROFILE, experiment_ids, load_config
 from .runner import run_baseline
 
-AA_VARIANTS = [v for v in EXPERIMENT_IDS if v[0] != "B0"]
+
+def aa_variants(profile_id: str = STANDARD_PROFILE):
+    return [v for v in experiment_ids(profile_id) if v[0] != "B0"]
+
+
+AA_VARIANTS = aa_variants()
 
 
 class CalibrationInconsistent(RuntimeError):
     pass
 
 
-def run_calibration(seeds: List[int], root: Path, build: bool = True) -> Dict[str, Any]:
+def run_calibration(seeds: List[int], root: Path, build: bool = True,
+                    profile_id: str = STANDARD_PROFILE) -> Dict[str, Any]:
+    profile = profiles.get(profile_id)
     if build:
         forge_build(root)
+        if profile.includes_b3_infrastructure:
+            b3.forge_build_b3(root)
     cfg = load_config(root)
     samples: List[Dict[str, Any]] = []
     fingerprints = []
     for seed in seeds:
-        for b, w in AA_VARIANTS:
-            r = run_baseline(b, seed, root, build=False, workload_id=w, pvg_mode="dry_run")
+        for b, w in aa_variants(profile_id):
+            r = run_baseline(b, seed, root, build=False, workload_id=w, pvg_mode="dry_run",
+                             profile_id=profile_id)
             if r.failure is not None:
                 raise CalibrationInconsistent(f"{b} {w} failed during calibration: {r.failure}")
             reconcile(r.chain_dump, r.private)  # includes the no-subsidy assertion
@@ -73,7 +87,9 @@ def run_calibration(seeds: List[int], root: Path, build: bool = True) -> Dict[st
         "artifact_version": calibration.ARTIFACT_VERSION,
         "method": "break_even_calibration_v1 (exact-bundle evm_snapshot dry run)",
         "created_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "regenerate_with": "python3 -m experiments.workloads.w1.calibrate --seed <s> ...",
+        "evaluation_profile": profile.as_dict(),
+        "regenerate_with": (f"python3 -m experiments.workloads.w1.calibrate --profile "
+                            f"{profile_id} --seed <s> ..."),
         "environment_fingerprint": fingerprints[0],
         "bundle_size": calibration.BUNDLE_SIZE,
         "provisional_pre_verification_gas": cfg.provisional_pre_verification_gas,
@@ -94,10 +110,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, action="append", required=True)
     ap.add_argument("--root", default=None)
+    ap.add_argument("--profile", default=STANDARD_PROFILE, choices=sorted(profiles.PROFILES))
     args = ap.parse_args(argv)
     root = Path(args.root) if args.root else repo_root()
-    artifact = run_calibration(args.seed, root)
-    path = calibration.artifact_path(root)
+    artifact = run_calibration(args.seed, root, profile_id=args.profile)
+    path = calibration.artifact_path(root, args.profile)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {path.relative_to(root)}")

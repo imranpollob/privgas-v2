@@ -1,0 +1,10 @@
+{
+  "name": "privgas-v2-b3-prover",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Real Semaphore v4 / Groth16 proof generation for the frozen B3 (PrivGas v1) evaluation. Same library and version the frozen B3 fixture scripts use (baselines/b3_privgas_v1/DEPENDENCIES.md).",
+  "type": "module",
+  "dependencies": {
+    "@semaphore-protocol/core": "4.14.2"
+  }
+}

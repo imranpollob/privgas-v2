@@ -37,6 +37,28 @@ a free-form bag): SimpleAccountInitialized / ERC1967 Upgraded / Initialized
 logs of the account deployment, and EntryPoint BeforeExecution. They are in
 the raw dump.
 
+B3-PrivGas-v1 and every run on the ``b3_compat_local`` profile add (schema 5.0.0):
+
+* ``EntryPoint.depositTo(paymaster)`` tx -> ``paymaster_event`` /
+  ``paymaster_deposit`` (sender = funding wallet, target = EntryPoint,
+  ``subject_account`` = Paymaster), plus ``entrypoint_deposit``
+* ``AnnouncementRegistry.announceAndFund`` tx -> ``eoa_transaction`` /
+  ``stealth_announce_and_fund`` (value = vMin + fee, ``subject_account`` = the
+  announced account), then per log: ``stealth_announcement`` (MockAnnouncer
+  ``AnnounceCalled``), two ``sponsorship_eligibility`` (``EligibilityMirrored``
+  from BootstrapPaymaster and CreditPool), and from ``Funded`` two
+  ``native_transfer`` rows: registry -> account (forwarded vMin, ``funding``)
+  and registry -> address(0) (``fee_burn``, ``authorization``)
+* inside B3 bundles: ``paymaster_event`` / ``paymaster_sponsorship``
+  (``BootstrapSponsored``), ``privacy_pool_event`` / ``pool_root_update``
+  (``RootMirrored``: merkle_root), ``pool_deposit`` (CreditPool ``Deposited``:
+  commitment, merkle_root) and ``pool_redeem`` (``CreditSpent``: nullifier, plus
+  the proof's public root and proof metadata decoded from the mined
+  ``paymasterAndData``)
+
+Each UserOperation row keeps its real ``sender``: B3's Bootstrap and Spend
+operations are recorded exactly as mined, including when they share one account.
+
 All rows are ``observer_tier: "A0"``: the in-repo bundler exposes no public
 mempool, so no A1 observation exists for these runs, and a UserOperation the
 bundler rejected is recorded in ``bundler_private`` only.
@@ -51,6 +73,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from eth_abi import decode
+
 from ...recorder import paths as paths_mod
 from ...recorder.adapters import (
     BundlerObservation,
@@ -62,8 +86,8 @@ from ...recorder.adapters import (
 )
 from ...recorder.provenance import environment_report, software_revision
 from ...recorder.writers import ExperimentRecorder
-from . import abi
-from .config import ENTRYPOINT_VERSION, EXPERIMENT_IDS
+from . import abi, b3
+from .config import B3_BASELINE_ID, ENTRYPOINT_VERSION, STANDARD_PROFILE, experiment_id
 from .keys import opaque_handle
 from .userop import unpack
 
@@ -91,6 +115,7 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
     ep = contracts["EntryPoint"].lower()
     pm = contracts["ObservablePaymaster"].lower()
     paymasters = {pm, contracts["SignatureVerifyingPaymaster"].lower()}
+    registry = _lower(contracts.get("AnnouncementRegistry"))
     deposit_before = chain_dump["state"].get("entrypoint_deposit_before_tx", {})
     out: List[Observation] = []
 
@@ -167,9 +192,59 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
         elif to == ep and sel == abi.SELECTOR_HANDLE_OPS:
             out.extend(_bundle_observations(chain_dump, t, data, logs, common,
                                             tx_gas, deposit_before.get(tx["hash"], {})))
+        elif to == ep and sel == b3.SELECTOR_EP_DEPOSIT_TO:
+            (funded_pm,) = decode(["address"], data[4:])
+            out.append(Observation(
+                event_type="paymaster_event", asset_type="native", sender=tx["from"],
+                target=tx["to"], subject_account=funded_pm, method_selector=sel,
+                calldata_class="paymaster_deposit", nonce=_u(tx["nonce"]),
+                asset_amount=_u(tx["value"]), **tx_gas, **common))
+            for log, d in logs:
+                if d and d["event"] == "Deposited":
+                    out.append(_deposit_row(log, d, log_common,
+                                            deposit_before.get(tx["hash"], {})))
+        elif registry is not None and to == registry and sel == b3.SELECTOR_ANNOUNCE_AND_FUND:
+            out.extend(_announcement_observations(tx, rc, data, common, log_common, tx_gas))
         else:
             raise ValueError(f"unclassifiable W1 transaction {tx['hash']}")
     return out
+
+
+def _announcement_observations(tx, rc, data, common, log_common, tx_gas) -> List[Observation]:
+    """B3 Stage 1: announceAndFund and the logs it emits (log order)."""
+    _, stealth, _, _ = decode(["uint256", "address", "bytes", "bytes"], data[4:])
+    rows = [Observation(
+        event_type="eoa_transaction", asset_type="native", sender=tx["from"], target=tx["to"],
+        subject_account=stealth, method_selector=b3.SELECTOR_ANNOUNCE_AND_FUND,
+        calldata_class="stealth_announce_and_fund", nonce=_u(tx["nonce"]),
+        asset_amount=_u(tx["value"]), **tx_gas, **common)]
+    for log in rc["logs"]:
+        d = b3.decode_b3_log(log)
+        if d is None:
+            continue
+        li = _u(log["logIndex"])
+        if d["event"] == "AnnounceCalled":
+            rows.append(Observation(
+                event_type="stealth_announcement", asset_type="none", log_index=li,
+                target=log["address"], subject_account=d["stealth_address"],
+                outcome="success", success=True, **log_common))
+        elif d["event"] == "EligibilityMirrored":
+            rows.append(Observation(
+                event_type="sponsorship_eligibility", asset_type="none", log_index=li,
+                sender=tx["to"], target=log["address"], subject_account=d["stealth_address"],
+                outcome="success", success=True, **log_common))
+        elif d["event"] == "Funded":
+            rows.append(Observation(
+                event_type="native_transfer", asset_type="native", log_index=li,
+                sender=log["address"], target=d["stealth_address"],
+                calldata_class="native_value_only", asset_amount=d["forwarded"],
+                outcome="success", success=True, **log_common))
+            rows.append(Observation(
+                event_type="native_transfer", asset_type="native", log_index=li,
+                sender=log["address"], target="0x" + "00" * 20, calldata_class="fee_burn",
+                asset_amount=d["fee_burned"], outcome="success", success=True,
+                **log_common))
+    return rows
 
 
 def _deposit_row(log, d, log_common, deposit_before) -> Observation:
@@ -210,8 +285,12 @@ def _bundle_observations(chain_dump, t, data, logs, common, tx_gas,
             paymaster_verification_gas_limit=op["paymaster_verification_gas_limit"],
             paymaster_post_op_gas_limit=op["paymaster_post_op_gas_limit"])
 
+    verifier = chain_dump["contracts"].get("SemaphoreVerifier")
     for log, d in logs:
         if d is None:
+            d3 = b3.decode_b3_log(log)
+            if d3 is not None:
+                rows.append(_b3_bundle_row(log, d3, decoded_ops, log_common, verifier))
             continue
         li = _u(log["logIndex"])
         if d["event"] == "Deposited":
@@ -257,6 +336,46 @@ def _bundle_observations(chain_dump, t, data, logs, common, tx_gas,
                 revert_reason_class=None if d["success"] else "target_reverted",
                 **log_common))
     return rows
+
+
+def _b3_bundle_row(log, d, decoded_ops, log_common, verifier) -> Observation:
+    """One B3 protocol log inside a handleOps bundle."""
+    li = _u(log["logIndex"])
+    if d["event"] == "BootstrapSponsored":
+        return Observation(
+            event_type="paymaster_event", asset_type="none", log_index=li,
+            target=log["address"], paymaster=log["address"],
+            subject_account=d["stealth_address"], calldata_class="paymaster_sponsorship",
+            outcome="success", success=True, **log_common)
+    if d["event"] == "RootMirrored":
+        return Observation(
+            event_type="privacy_pool_event", asset_type="none", log_index=li,
+            target=log["address"], calldata_class="pool_root_update",
+            merkle_root=b3.word(d["root"]), outcome="success", success=True, **log_common)
+    if d["event"] == "CreditDeposited":
+        depositor = next((o["sender"] for o in decoded_ops
+                          if len(o["call_data"]) >= 4
+                          and abi.decode_execute(o["call_data"])[0].lower()
+                          == log["address"].lower()), None)
+        return Observation(
+            event_type="privacy_pool_event", asset_type="none", log_index=li,
+            sender=depositor, target=log["address"], method_selector=b3.SELECTOR_POOL_DEPOSIT,
+            calldata_class="pool_deposit", commitment=b3.word(d["commitment"]),
+            merkle_root=b3.word(d["root"]), outcome="success", success=True, **log_common)
+    if d["event"] == "CreditSpent":
+        op = next(o for o in decoded_ops if o["sender"].lower() == d["sender"].lower())
+        proof = b3.decode_proof(op["paymaster_and_data"][52:52 + b3.PROOF_BYTE_LENGTH])
+        return Observation(
+            event_type="privacy_pool_event", asset_type="none", log_index=li,
+            sender=d["sender"], target=log["address"], paymaster=log["address"],
+            calldata_class="pool_redeem", nullifier=b3.word(d["nullifier"]),
+            merkle_root=b3.word(proof["merkle_tree_root"]),
+            proof_metadata={"scheme": "groth16", "verifier_address": _lower(verifier),
+                            "public_signal_count": 4,
+                            "proof_byte_length": b3.PROOF_BYTE_LENGTH,
+                            "tree_depth": proof["merkle_tree_depth"]},
+            outcome="success", success=True, **log_common)
+    raise ValueError(f"unexpected B3 log inside a bundle: {d['event']}")
 
 
 def bundler_observations(bundler_log: List[Dict[str, Any]]) -> List[BundlerObservation]:
@@ -350,6 +469,74 @@ def ground_truth(chain_dump: Dict[str, Any], private: Dict[str, Any], seed: int,
         })
 
 
+def b3_ground_truth(chain_dump: Dict[str, Any], private: Dict[str, Any], seed: int,
+                    record_ids_by_tx: Dict[str, List[str]]) -> List[GroundTruth]:
+    """B3-PrivGas-v1: one row for the Spend operation (the W1 application action)
+    and one for the Bootstrap operation, R1/R2/R3 explicit on both.
+
+    R1 (one hop, unchanged): the immediate gas payer of both operations is a B3
+    Paymaster's EntryPoint deposit (public); the economic funding source is the
+    sponsor-operator wallet that funded those deposits with EntryPoint.depositTo.
+    Neither Paymaster contract is ever the economic funder. The asset sender's
+    vMin is forwarded to the account but pays no gas, and the non-refundable fee
+    is burned, so neither is a one-hop funding source of either operation.
+    R2: Spend redeems the credit issued by Bootstrap (observed); Bootstrap
+    redeems no credit (absent, a kept negative).
+    R3: the account belongs to the actor on both rows.
+    """
+    roles = private["roles"]
+    by_label = {v: k for k, v in private["tx_labels"].items()}
+    ops = {u["label"]: u for u in chain_dump["userops"]}
+    boot, spend = ops["w3_bootstrap_bundle"], ops["w4_spend_bundle"]
+    boot_tx, spend_tx = by_label["w3_bootstrap_bundle"], by_label["w4_spend_bundle"]
+    pmd = bytes.fromhex(spend["packed"]["paymasterAndData"][2:])
+    nullifier = b3.decode_proof(pmd[52:52 + b3.PROOF_BYTE_LENGTH])["nullifier"]
+    commitment = int(private["b3"]["identity_commitment"])
+    b = chain_dump["baseline_id"]
+    actor = opaque_handle(seed, "actor", "actor")
+    sponsor = opaque_handle(seed, "sponsor", "sponsor_operator")
+    credit = opaque_handle(seed, "credit", f"{b}/credit/0")
+    issuance = opaque_handle(seed, "issuance", f"{b}/issuance/0")
+    common = dict(
+        scenario_id="scn-0", subject_kind="operation", actor_id=actor,
+        established_wallet_id=opaque_handle(seed, "wallet", "established_wallet"),
+        economic_funding_source_id=sponsor,
+        immediate_gas_payer_kind="paymaster_entrypoint_deposit",
+        asset_sender_id=opaque_handle(seed, "sender", "asset_sender"),
+        stealth_account_id=opaque_handle(seed, "stealth", f"recipient_account/{b}"),
+        credit_id=credit, issuance_id=issuance)
+    anchors = {
+        "stealth_account_address": roles["recipient_account"],
+        "economic_funding_address": roles["sponsor_operator"],
+        "asset_sender_address": roles["asset_sender"],
+        "established_wallet_address": roles["established_wallet"],
+        "issuance_transaction_hash": boot_tx,
+        "issuance_userop_hash": boot["userop_hash"],
+        "credit_commitment": b3.word(commitment),
+        "credit_nullifier": b3.word(nullifier),
+    }
+    contracts = chain_dump["contracts"]
+    rows = []
+    for op, tx, pm, r2 in (
+            (spend, spend_tx, contracts["CreditPaymaster"],
+             RelationLabel("R2", "observed", subject_ref=spend["userop_hash"],
+                           true_value=issuance, candidate_set_id="b3-credit-issuances")),
+            (boot, boot_tx, contracts["BootstrapPaymaster"],
+             RelationLabel("R2", "absent", subject_ref=boot["userop_hash"],
+                           candidate_set_id="b3-credit-issuances"))):
+        rows.append(GroundTruth(
+            **common,
+            r1=RelationLabel("R1", "observed", subject_ref=op["userop_hash"],
+                             true_value=sponsor, candidate_set_id="w1-economic-funders"),
+            r2=r2,
+            r3=RelationLabel("R3", "observed", subject_ref=op["userop_hash"],
+                             true_value=actor, candidate_set_id="w1-actors"),
+            public_anchors={**anchors, "immediate_gas_payer_address": pm,
+                            "transaction_hash": tx, "userop_hash": op["userop_hash"],
+                            "public_event_record_ids": record_ids_by_tx.get(tx, [])}))
+    return rows
+
+
 def _lower_addresses(obj: Any) -> Any:
     """Apply the schema's lowercase-address rule inside the manifest too."""
     if isinstance(obj, dict):
@@ -373,7 +560,26 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
     aa = b != "B0"
     pm_name = chain_dump["paymaster_used"]
     paymaster = None
-    if pm_name == "ObservablePaymaster":
+    if b == B3_BASELINE_ID:
+        paymaster = {
+            "kind": "b3_privgas_v1_paymasters", "name": "BootstrapPaymaster+CreditPaymaster",
+            "baseline_role": "frozen PrivGas v1 specimen (unmodified)",
+            "authorization_rule": (
+                "Bootstrap: BootstrapPaymaster sponsors exactly one "
+                "execute(CreditPool, 0, deposit(uint256)) per announced (eligible) account; "
+                "Spend: CreditPaymaster sponsors any operation carrying a Semaphore v4 proof "
+                "over userOpHash against the latest mirrored root, fixed scope, fresh "
+                "nullifier (proof in the v0.9.0 PAYMASTER_SIG_MAGIC suffix)"),
+            "address": c["CreditPaymaster"],
+            "bootstrap_paymaster_address": c["BootstrapPaymaster"],
+            "version": f"{chain_dump['b3_provenance']['source_repo']}@"
+                       f"{chain_dump['b3_provenance']['source_commit']}",
+            "deployed_bytecode_sha256": arts["CreditPaymaster"]["deployed_bytecode_sha256"],
+            "bootstrap_deployed_bytecode_sha256":
+                arts["BootstrapPaymaster"]["deployed_bytecode_sha256"],
+            "staked": False,
+            "privacy_mechanism": _b3_privacy_mechanism(chain_dump)}
+    elif pm_name == "ObservablePaymaster":
         paymaster = {
             "kind": "observable_paymaster_allowlist", "name": pm_name,
             "baseline_role": "auxiliary (public on-chain sponsor->account allowlist "
@@ -389,7 +595,7 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
                                   "the v0.9.0 PAYMASTER_SIG_MAGIC suffix; signed data "
                                   "abi.encode(uint48 validUntil, uint48 validAfter)",
             "verifying_signer": chain_dump["signature_paymaster_verifying_signer"]}
-    if paymaster is not None:
+    if paymaster is not None and b != B3_BASELINE_ID:
         paymaster.update({
             "address": c[pm_name],
             "version": f"baselines/w1_b0_b2/src/{pm_name}.sol",
@@ -426,9 +632,34 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
         "transfer_amount": cfg["token"]["transfer_amount"],
         "fee_policy": cfg["fees"],
         "chain_environment": chain_dump["environment"],
+        "evaluation_profile": chain_dump.get("evaluation_profile"),
+        "b3_provenance": chain_dump.get("b3_provenance"),
         "matched_config_sha256": hashlib.sha256(
             json.dumps(cfg, sort_keys=True).encode()).hexdigest(),
         "environment_contracts_deployed_in_identical_setup": c,
+    }
+
+
+def _b3_privacy_mechanism(chain_dump: Dict[str, Any]) -> Dict[str, Any]:
+    from .prover import SEMAPHORE_CORE_VERSION, load_pin
+    pin = load_pin()
+    cfg = chain_dump["b3_config"]
+    depth = cfg["semaphore"]["merkle_tree_depth"]
+    return {
+        "scheme": "Semaphore v4 membership proof (Groth16, BN254)",
+        "verifier": {"contract": "SemaphoreVerifier (B3 vendored, real verification)",
+                     "address": chain_dump["contracts"]["SemaphoreVerifier"],
+                     "deployed_bytecode_sha256":
+                         chain_dump["artifacts"]["SemaphoreVerifier"]["deployed_bytecode_sha256"]},
+        "prover_library": f"@semaphore-protocol/core {SEMAPHORE_CORE_VERSION}",
+        "circuit": {"name": f"semaphore-{depth}",
+                    "artifact_version": pin["semaphore_artifact_version"],
+                    "wasm_sha256": pin["artifacts"][str(depth)]["wasm"]["sha256"],
+                    "zkey_sha256": pin["artifacts"][str(depth)]["zkey"]["sha256"]},
+        "merkle_tree_depth": int(depth),
+        "credit_scope": "keccak256('stealth-protocol.credit.v1')",
+        "credit_pool": chain_dump["contracts"]["CreditPool"],
+        "root_policy": "latest mirrored root only (no root history)",
     }
 
 
@@ -458,6 +689,22 @@ NOTES = {
                        "sponsored by SignatureVerifyingPaymaster (sponsor ECDSA signature "
                        "over the EntryPoint userOpHash; no on-chain authorization "
                        "transaction).",
+    (B3_BASELINE_ID, "W1-cold"): _COMMON_NOTE + "B3-PrivGas-v1, the FROZEN PrivGas v1 "
+                       "specimen (baselines/b3_privgas_v1 @ 02a3f0ab, unmodified), W1-cold: "
+                       "announceAndFund (Stage 1), a BootstrapPaymaster-sponsored operation "
+                       "that deploys the same SimpleAccount and deposits a Semaphore "
+                       "commitment (Stage 2), and a CreditPaymaster-sponsored operation from "
+                       "the same account carrying a real Groth16 proof and performing the W1 "
+                       "application call (Stage 3). Paymasters not staked; no ERC-7562 "
+                       "enforcement.",
+}
+
+PROFILE_NOTE = {
+    STANDARD_PROFILE: "",
+    "b3_compat_local": (" EVALUATION PROFILE b3_compat_local: NON-PRODUCTION, "
+                        "NON-EIP-170-DEPLOYABLE-AS-BUILT, PRIVACY-EVALUATION-ONLY (anvil "
+                        "--code-size-limit 32768; the setup of every run on this profile "
+                        "also deploys and funds the frozen B3 contracts)."),
 }
 
 
@@ -467,17 +714,20 @@ def record_run(chain_dump: Dict[str, Any], bundler_log: List[Dict[str, Any]],
                env_report=None, revision=None) -> Dict[str, Any]:
     b = chain_dump["baseline_id"]
     w = chain_dump["workload_id"]
-    experiment_id = EXPERIMENT_IDS[(b, w)]
-    rp = paths_mod.run_paths(experiment_id, run_id, root)
+    profile_id = (chain_dump.get("evaluation_profile") or {}).get("profile_id",
+                                                                  STANDARD_PROFILE)
+    exp_id = experiment_id(b, w, profile_id)
+    rp = paths_mod.run_paths(exp_id, run_id, root)
     adapter = for_baseline(b)()
     adapter.chain_id = chain_dump["environment"]["chain_id"]
 
     rec = ExperimentRecorder(
-        experiment_id=experiment_id, run_id=run_id, baseline_id=b, workload_id=w,
+        experiment_id=exp_id, run_id=run_id, baseline_id=b, workload_id=w,
         seed=seed, chain_id=adapter.chain_id, components=components(chain_dump, private),
         data_origin="measured", paths=rp,
         revision=revision or software_revision(root),
-        env_report=env_report or environment_report(root), clock=clock, notes=NOTES[(b, w)])
+        env_report=env_report or environment_report(root), clock=clock,
+        notes=NOTES[(b, w)] + PROFILE_NOTE[profile_id])
 
     written: Dict[str, List[Dict[str, Any]]] = {
         "public_events": [], "bundler_private": [], "ground_truth": []}
@@ -487,12 +737,19 @@ def record_run(chain_dump: Dict[str, Any], bundler_log: List[Dict[str, Any]],
         for bobs in bundler_observations(bundler_log):
             written["bundler_private"].append(
                 rec.record_bundler_private(adapter.bundler_private(bobs)))
-        action_hash = next((h for h, l in private["tx_labels"].items()
-                            if l in ("w3_recipient_action", "w3_bundle")), None)
-        action_ids = [r["record_id"] for r in written["public_events"]
-                      if r["transaction_hash"] == action_hash]
-        written["ground_truth"].append(rec.record_ground_truth(
-            adapter.ground_truth(ground_truth(chain_dump, private, seed, action_ids))))
+        if b == B3_BASELINE_ID:
+            ids_by_tx: Dict[str, List[str]] = {}
+            for r in written["public_events"]:
+                ids_by_tx.setdefault(r["transaction_hash"], []).append(r["record_id"])
+            for gt in b3_ground_truth(chain_dump, private, seed, ids_by_tx):
+                written["ground_truth"].append(rec.record_ground_truth(adapter.ground_truth(gt)))
+        else:
+            action_hash = next((h for h, l in private["tx_labels"].items()
+                                if l in ("w3_recipient_action", "w3_bundle")), None)
+            action_ids = [r["record_id"] for r in written["public_events"]
+                          if r["transaction_hash"] == action_hash]
+            written["ground_truth"].append(rec.record_ground_truth(
+                adapter.ground_truth(ground_truth(chain_dump, private, seed, action_ids))))
 
     # Cost window vs privacy trace: the public stream holds every row; which
     # rows the cost analysis counts is private experiment metadata.
@@ -509,5 +766,5 @@ def record_run(chain_dump: Dict[str, Any], bundler_log: List[Dict[str, Any]],
     rp.private_run_dir.mkdir(parents=True, exist_ok=True)
     (rp.private_run_dir / "w1_cost_window.json").write_text(
         json.dumps(window, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return {"experiment_id": experiment_id, "run_id": run_id, "paths": rp,
+    return {"experiment_id": exp_id, "run_id": run_id, "paths": rp,
             "rows": written}

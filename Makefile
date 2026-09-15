@@ -10,11 +10,12 @@ ENTRYPOINT_VERSION ?= unset
 
 .PHONY: help install test benchmark run-local-experiment clean env-report \
         recorder-test recorder-examples recorder-selfcheck recorder-docs \
-        baselines-build baselines-test run-matched-baselines calibrate-pvg
+        baselines-build baselines-test run-matched-baselines calibrate-pvg \
+        b3-eval-build b3-prover-install b3-eip170-test run-b3-evaluation
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-24s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-24s %s\n", $$1, $$2}'
 
 install: ## Verify required tooling is present (no app dependencies exist yet)
 	@echo "Checking core tooling..."
@@ -26,7 +27,7 @@ install: ## Verify required tooling is present (no app dependencies exist yet)
 	@echo "(no contracts/circuits/app code has been added — see docs/decision-log.md)."
 	@echo "Run 'make env-report' for the full version report."
 
-test: scaffold-test recorder-test baselines-test ## Run the full test suite
+test: scaffold-test recorder-test b3-eip170-test baselines-test ## Run the full test suite
 
 .PHONY: scaffold-test
 scaffold-test: ## Repository-layout and gitignore self-checks
@@ -73,18 +74,34 @@ recorder-docs: ## Regenerate the schema field tables in docs/experiment-schema.m
 baselines-build: ## Compile the B0/B1/B2 contracts (EntryPoint v0.9.0, SimpleAccount, ObservablePaymaster)
 	@cd baselines/w1_b0_b2 && forge build
 
-calibrate-pvg: baselines-build ## CALIBRATION phase: measure EntryPoint overhead O -> baselines/w1_b0_b2/calibration/pvg-overhead.json
-	@python3 -m experiments.workloads.w1.calibrate --seed $(or $(SEED1),910001) --seed $(or $(SEED2),910002)
+# --- Frozen B3 (PrivGas v1) evaluation: NON-PRODUCTION | NON-EIP-170-DEPLOYABLE-AS-BUILT |
+# PRIVACY-EVALUATION-ONLY. Compiles the unmodified submodule sources from baselines/b3_eval.
+b3-eval-build: ## Compile the frozen B3 contracts (unmodified) for the b3_compat_local evaluation profile
+	@cd baselines/b3_eval && forge build
 
-baselines-test: baselines-build ## Forge semantics tests + live anvil tests for real B0/B1/B2
+b3-prover-install: ## Install the pinned Semaphore prover (@semaphore-protocol/core 4.14.2) from package-lock.json
+	@cd experiments/workloads/w1/prover && npm ci --no-audit --no-fund
+
+b3-eip170-test: ## Regression: the frozen PoseidonT3 still exceeds EIP-170 (docs/b3-reproduction.md)
+	@cd test/b3_ordinary_deploy && forge test --match-test test_poseidonT3_confirmedExceedsEip170SizeLimit
+
+calibrate-pvg: baselines-build b3-eval-build b3-prover-install ## CALIBRATION phase, both profiles: EntryPoint overhead O -> baselines/w1_b0_b2/calibration/pvg-overhead[.b3_compat_local].json
+	@python3 -m experiments.workloads.w1.calibrate --seed $(or $(SEED1),910001) --seed $(or $(SEED2),910002)
+	@python3 -m experiments.workloads.w1.calibrate --profile b3_compat_local --seed $(or $(SEED1),910001) --seed $(or $(SEED2),910002)
+
+baselines-test: baselines-build b3-eval-build b3-prover-install ## Forge semantics tests + live anvil tests for real B0/B1/B2 and the frozen B3
 	@echo "Running B0/B1/B2 Foundry tests..."
 	@cd baselines/w1_b0_b2 && forge test
-	@echo "Running B0/B1/B2 live W1 tests against anvil..."
+	@echo "Running B0/B1/B2 and B3-PrivGas-v1 live W1 tests against anvil..."
 	@python3 -m unittest discover -s experiments/workloads/w1/tests -t .
 
 run-matched-baselines: ## Real W1 runs (B0, B1 cold/warm, B2-Allowlist, B2-Signature) through the recorder: make run-matched-baselines SEED=<seed> [VARIANT=all]
 	@if [ -z "$(SEED)" ]; then echo "ERROR: SEED is required, e.g. make run-matched-baselines SEED=42 [VARIANT=B1:W1-warm]"; exit 1; fi
 	@python3 -m experiments.workloads.w1 --variant $(or $(VARIANT),all) --seed $(SEED)
+
+run-b3-evaluation: b3-prover-install ## Matched B0/B1/B2-Signature on both profiles + B3-PrivGas-v1 on b3_compat_local, with profile effect: make run-b3-evaluation SEED=<seed>
+	@if [ -z "$(SEED)" ]; then echo "ERROR: SEED is required, e.g. make run-b3-evaluation SEED=42"; exit 1; fi
+	@python3 -m experiments.workloads.w1 --variant matched --profile eip170_standard --profile b3_compat_local --seed $(SEED)
 
 benchmark: ## Run the benchmark suite (placeholder until protocol code exists)
 	@echo "No benchmarks defined yet — add them under experiments/ and wire this target"

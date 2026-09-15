@@ -68,7 +68,12 @@ repository — code, docs, or paper.
 
 ## Trust assumptions
 
-Not yet finalized per-baseline. Each baseline (`docs/baseline-spec.md`
+B3-PrivGas-v1 (2026-09-15, `docs/b3-evaluation.md`): evaluated at A0 (chain) and
+A2 (in-repo bundler); assumed honest: local node, bundler, sponsor operator and
+the recipient's local prover. Evaluated only on the NON-PRODUCTION
+`b3_compat_local` chain profile.
+
+Otherwise not yet finalized per-baseline. Each baseline (`docs/baseline-spec.md`
 registry) must state, when implemented, which of A0-A3 it is evaluated
 under and which components are assumed honest for that evaluation. An
 entry without an explicit adversary tier is incomplete.

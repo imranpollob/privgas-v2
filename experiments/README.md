@@ -23,7 +23,7 @@ experiments/
     paths.py            on-disk layout, incl. observer-tier directories
     digest.py           content digests shared across the boundary
     writers.py          JSONL writers + ExperimentRecorder
-    adapters/           Observation -> record, per baseline (B0, B1, B2)
+    adapters/           Observation -> record, per baseline (B0, B1, B2, B3-PrivGas-v1)
     examples/           synthetic B0/B1/B2 fixture runs (schema examples only)
     docgen.py           generates the field tables in the schema doc
   attacker_view/        READ side: public (A0/A1) + bundler (A2) data only
@@ -31,10 +31,15 @@ experiments/
   tests/                schema, boundary, label-join, integration, self-check
 
   workloads/w1/         REAL W1 runner (B0, B1, B2-Allowlist, B2-Signature;
-                        W1-cold/W1-warm): signed txs on anvil, instrumented
-                        bundler, preVerificationGas calibration (pvg.py), cost
-                        reconciliation, raw -> records, fairness (compare.py)
-    tests/              live anvil tests + dependency pin
+                        W1-cold/W1-warm; and the frozen B3-PrivGas-v1 on the
+                        b3_compat_local profile): signed txs on anvil,
+                        instrumented bundler, preVerificationGas calibration
+                        (pvg.py, calibration.py), evaluation profiles
+                        (profiles.py), B3 deployment/ops (b3.py), real Semaphore
+                        prover (prover.py, prover/), cost reconciliation
+                        (accounting.py, accounting_b3.py), raw -> records,
+                        fairness and profile effect (compare.py)
+    tests/              live anvil tests (B0-B2, test_b3_live.py) + dependency pins
   privacy/ liveness/ settlement/ analysis/   (experiment defs, empty)
 ```
 
@@ -72,8 +77,10 @@ make recorder-examples    # regenerate the synthetic B0/B1/B2 example runs
 make recorder-selfcheck   # scan data/public/ for leaked keys and values
 make recorder-docs        # regenerate the field tables in the schema doc
 make baselines-test       # forge + live anvil tests of the real B0/B1/B2
-make calibrate-pvg                   # calibration phase: EntryPoint overhead artifact
+make calibrate-pvg                   # calibration phase: EntryPoint overhead artifacts (both profiles)
 make run-matched-baselines SEED=<n>   # real runs for all variants, recorded
+make run-b3-evaluation SEED=<n>       # matched B0/B1/B2-Signature on both profiles + B3-PrivGas-v1
+make b3-eip170-test                   # the frozen PoseidonT3 still exceeds EIP-170
 ```
 
 ## Status

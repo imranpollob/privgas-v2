@@ -33,12 +33,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from . import abi
+from .config import ALL_PAYMASTERS, B3_BASELINE_ID
 
 REQUIRED_STEPS = {
     "B0": ("w1_asset_delivery", "w2_eth_allowance", "w3_recipient_action"),
     "B1": ("w1_asset_delivery", "w2_eth_allowance", "w3_bundle"),
     "B2-Allowlist": ("w1_asset_delivery", "w2_sponsor_allowlist", "w3_bundle"),
     "B2-Signature": ("w1_asset_delivery", "w3_bundle"),
+    B3_BASELINE_ID: ("w1_asset_delivery", "w2_announce_and_fund", "w3_bootstrap_bundle",
+                     "w4_spend_bundle"),
 }
 REQUIRED_WARMUP_STEPS = ("warmup_eth_allowance", "warmup_deploy_bundle")
 
@@ -109,6 +112,9 @@ def _userop_gas_price(op_json: Dict[str, Any], base_fee: int) -> int:
 
 
 def reconcile(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str, Any]:
+    if chain_dump["baseline_id"] == B3_BASELINE_ID:
+        from .accounting_b3 import reconcile_b3
+        return reconcile_b3(chain_dump, private)
     baseline = chain_dump["baseline_id"]
     workload = chain_dump["workload_id"]
     warm = workload == "W1-warm"
@@ -122,8 +128,8 @@ def reconcile(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str, 
     contracts = chain_dump["contracts"]
     ep = contracts["EntryPoint"]
     used_pm = contracts[chain_dump["paymaster_used"]] if chain_dump["paymaster_used"] else None
-    other_pms = [contracts[n] for n in ("ObservablePaymaster", "SignatureVerifyingPaymaster")
-                 if contracts[n] != used_pm]
+    other_pms = [contracts[n] for n in ALL_PAYMASTERS
+                 if n in contracts and contracts[n] != used_pm]
     recipient = roles["recipient_account"]
     amount = _u(chain_dump["config"]["token"]["transfer_amount"])
     allowance = _u(private["eth_allowance"])
@@ -300,6 +306,7 @@ def reconcile(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str, 
     return {
         "baseline_id": baseline,
         "workload_id": workload,
+        "evaluation_profile": (chain_dump.get("evaluation_profile") or {}).get("profile_id"),
         "blocks": {"setup_end": int(setup_end), "start": int(start), "end": int(end)},
         "balances": {
             "asset_sender_eth": pair(eth(sender, start), eth(sender, end)),

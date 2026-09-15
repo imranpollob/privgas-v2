@@ -65,15 +65,18 @@ class AnvilProcess:
     """A private anvil for exactly one run. Torn down on exit.
 
     Flags are explicit so the chain environment is part of the record:
-    chain id from the W1 config, pinned hardfork, EIP-170 code-size limit left
-    at its default (enforced), automine (one transaction per block).
+    chain id from the W1 config, pinned hardfork, automine (one transaction per
+    block), and the code-size limit of the evaluation profile (``profiles.py``):
+    anvil's EIP-170 default unless the profile raises it.
     """
 
-    def __init__(self, chain_id: int, base_fee: int) -> None:
+    def __init__(self, chain_id: int, base_fee: int,
+                 extra_args: Optional[List[str]] = None) -> None:
         self.port = _free_port()
         self.args = ["anvil", "--port", str(self.port), "--chain-id",
                      str(chain_id), "--hardfork", ANVIL_HARDFORK,
-                     "--block-base-fee-per-gas", str(base_fee), "--silent"]
+                     "--block-base-fee-per-gas", str(base_fee), "--silent",
+                     *(extra_args or [])]
         self.proc: Optional[subprocess.Popen] = None
         self.rpc = Rpc(f"http://127.0.0.1:{self.port}")
         self.version: Optional[str] = None

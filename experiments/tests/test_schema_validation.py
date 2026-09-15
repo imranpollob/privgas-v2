@@ -37,7 +37,7 @@ class TestValidRecords(RejectionTestCase):
         validate_record("bundler_private", F.bundler_private())
 
     def test_ground_truth_for_a_credit_baseline(self):
-        validate_record("ground_truth", F.ground_truth("B3"))
+        validate_record("ground_truth", F.ground_truth("B3-PrivGas-v1"))
 
 
 # --- D, E: hidden data in public streams -----------------------------------
@@ -52,7 +52,7 @@ class TestPrivateDataInPublicStreams(RejectionTestCase):
 
     def test_d_hidden_actor_id_nested_inside_an_object_is_rejected(self):
         """The scan is recursive: burying the key does not hide it."""
-        row = F.public_event(baseline_id="B3")
+        row = F.public_event(baseline_id="B3-PrivGas-v1")
         row["proof_metadata"] = {
             "scheme": "groth16", "verifier_address": None,
             "public_signal_count": 4, "proof_byte_length": 256,
@@ -120,9 +120,9 @@ class TestMalformedValues(RejectionTestCase):
                             code="malformed_hash")
 
     def test_h_unsupported_schema_version(self):
-        # 1.0.0-3.0.0 are superseded versions: their rows are not readable by
-        # 4.0.0 code (docs/experiment-schema.md Sec. 9).
-        for bad in ("0.9", "1.0", "1.0.0", "2.0.0", "3.0.0", "5.0.0", "", None, 1.0):
+        # 1.0.0-4.0.0 are superseded versions: their rows are not readable by
+        # 5.0.0 code (docs/experiment-schema.md Sec. 9).
+        for bad in ("0.9", "1.0", "1.0.0", "2.0.0", "3.0.0", "4.0.0", "6.0.0", "", None, 1.0):
             with self.subTest(bad=bad):
                 self.assertRejected("public_events",
                                     F.public_event(schema_version=bad),
@@ -309,7 +309,7 @@ class TestNullAndNotApplicableSemantics(RejectionTestCase):
 
     def test_m_r2_not_applicable_is_rejected_for_a_credit_baseline(self):
         """B3 has a credit lifecycle: 'absent' means no link, not 'no concept'."""
-        row = F.ground_truth("B3",
+        row = F.ground_truth("B3-PrivGas-v1",
                              issuance_to_redemption_label=F.label(
                                  "R2", status="not_applicable"))
         self.assertRejected("ground_truth", row,
@@ -459,6 +459,88 @@ class TestCrossFieldConsistency(RejectionTestCase):
         row = F.public_event(run_id="20260301T120000Z",
                              record_id="20260301T120000Z/public_events/000000")
         self.assertRejected("public_events", row, code="origin_mismatch")
+
+
+# --- schema 5.0.0: the frozen B3 specimen ----------------------------------
+
+
+class TestB3PrivGasV1Schema(RejectionTestCase):
+    B3 = "B3-PrivGas-v1"
+
+    def _pool_row(self, baseline_id="B3-PrivGas-v1", **kw):
+        base = dict(event_type="privacy_pool_event", asset_type="none", asset_contract=None,
+                    asset_amount=None, method_selector=None, calldata_class="pool_redeem",
+                    paymaster=F.PAYMASTER, nullifier=F.HASH_C, merkle_root=F.HASH_A,
+                    proof_metadata={"scheme": "groth16", "verifier_address": F.TOKEN,
+                                    "public_signal_count": 4, "proof_byte_length": 448,
+                                    "tree_depth": 1})
+        base.update(kw)
+        return F.public_event(baseline_id=baseline_id, **base)
+
+    def test_unsuffixed_b3_id_is_retired(self):
+        self.assertRejected("public_events", F.public_event(baseline_id="B3"),
+                            code="unknown_baseline")
+
+    def test_b3_privacy_artefacts_are_public_fields(self):
+        validate_record("public_events", self._pool_row())
+        self.assertRejected("public_events", self._pool_row(baseline_id="B2-Signature"),
+                            code="baseline_capability_violation")
+
+    def test_new_b3_rows_have_deterministic_trace_phases(self):
+        cases = [
+            ("eoa_transaction", "stealth_announce_and_fund", "funding"),
+            ("native_transfer", "fee_burn", "authorization"),
+            ("stealth_announcement", None, "authorization"),
+            ("sponsorship_eligibility", None, "authorization"),
+            ("paymaster_event", "paymaster_sponsorship", "authorization"),
+            ("privacy_pool_event", "pool_deposit", "funding"),
+            ("privacy_pool_event", "pool_root_update", "authorization"),
+            ("privacy_pool_event", "pool_redeem", "authorization"),
+        ]
+        from experiments.recorder.schemas.public_events import derive_trace_phase
+        for event_type, cls, phase in cases:
+            with self.subTest(event_type=event_type, calldata_class=cls):
+                self.assertEqual(derive_trace_phase(event_type, cls), phase)
+        self.assertRejected("public_events", self._pool_row(trace_phase="settlement"),
+                            code="trace_phase_inconsistent")
+
+    def test_privacy_pool_event_needs_a_pool_class(self):
+        row = self._pool_row(trace_phase="authorization")
+        row["calldata_class"] = None
+        self.assertRejected("public_events", row, code="trace_phase_inconsistent")
+
+    def test_observed_r2_needs_the_issuance_and_redemption_anchors(self):
+        validate_record("ground_truth", F.ground_truth(self.B3))
+        for key in ("issuance_transaction_hash", "issuance_userop_hash",
+                    "credit_commitment", "credit_nullifier"):
+            with self.subTest(anchor=key):
+                row = F.ground_truth(self.B3)
+                row["public_anchors"][key] = None
+                self.assertRejected("ground_truth", row, code="label_inconsistent")
+
+    def test_credit_anchors_are_null_without_a_credit_system(self):
+        row = F.ground_truth("B2-Signature")
+        row["public_anchors"]["credit_nullifier"] = F.HASH_C
+        self.assertRejected("ground_truth", row, code="baseline_capability_violation")
+
+    def test_bootstrap_row_keeps_r2_as_an_absent_negative(self):
+        row = F.ground_truth(self.B3, issuance_to_redemption_label=F.label("R2",
+                                                                          status="absent"))
+        validate_record("ground_truth", row)
+
+    def test_b3_paymaster_contract_cannot_be_the_economic_funder(self):
+        row = F.ground_truth(self.B3)
+        row["public_anchors"]["economic_funding_address"] = row["public_anchors"][
+            "immediate_gas_payer_address"]
+        self.assertRejected("ground_truth", row, code="payer_conflation")
+
+    def test_r2_answer_and_credit_handles_never_reach_public_rows(self):
+        for key in ("credit_id", "issuance_id", "issuance_to_redemption_label"):
+            with self.subTest(key=key):
+                self.assertRejected("public_events",
+                                    self._pool_row(**{key: "issuance_0001"}),
+                                    code="private_field_in_public_stream",
+                                    exc=PrivateDataLeak)
 
 
 if __name__ == "__main__":

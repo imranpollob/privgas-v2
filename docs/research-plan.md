@@ -147,6 +147,12 @@ Purpose: evaluate the published design as a specimen, not silently “improve”
 
 Any fixes needed for deployment must be recorded separately.
 
+*Evaluation note (2026-09-15, recorded in `docs/decision-log.md`):* no deployment
+fix was applied. The unmodified specimen is measured as `B3-PrivGas-v1` on a
+separately labelled local chain profile that raises only the code-size limit
+(NON-PRODUCTION, NON-EIP-170-DEPLOYABLE-AS-BUILT, PRIVACY-EVALUATION-ONLY); B0–B2
+run on the same profile for matched comparisons. See `docs/b3-evaluation.md`.
+
 ### B4 — Independently issued anonymous credit
 
 A minimal prototype where issuance is not performed by the stealth account itself.

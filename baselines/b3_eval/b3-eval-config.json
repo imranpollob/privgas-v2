@@ -1,0 +1,36 @@
+{
+  "_comment": "B3-PrivGas-v1 evaluation parameters (NON-PRODUCTION | NON-EIP-170-DEPLOYABLE-AS-BUILT | PRIVACY-EVALUATION-ONLY). Everything not listed here is shared with B0/B1/B2 through baselines/w1_b0_b2/w1-config.json (chain, token, amount, destination, fee policy, account verification gas limit, Spend call gas limit, bundler). Protocol parameters are copied from the frozen source, never chosen here. Changing any value after a result is reported requires a docs/decision-log.md entry.",
+  "config_version": "1",
+  "b3_source": {
+    "repository": "https://github.com/imranpollob/stealth-protocol",
+    "commit": "02a3f0abdb979446545aa87149080bfb44e43a3e",
+    "path": "baselines/b3_privgas_v1"
+  },
+  "protocol": {
+    "_comment": "From the frozen source: V_MIN and NONREFUNDABLE_FEE in test/FunctionalCorrectnessFixture.sol, script/Demo.s.sol and test/TestBase.t.sol; SCHEME_ID in the same files; F > AnnouncementRegistry.MIN_NON_REFUNDABLE_FEE (0.02 ETH). The credit scope is the CreditPaymaster constant keccak256('stealth-protocol.credit.v1'), read back from the deployed contract.",
+    "v_min": "10000000000000000",
+    "non_refundable_fee": "21000000000000000",
+    "scheme_id": "1",
+    "announcement_metadata_hex": "0x",
+    "announcement_ephemeral_public_key": "33-byte compressed secp256k1 public key of the seed-derived 'announcement_ephemeral' role (ERC-5564 scheme 1 shape; B3 implements no ERC-5564 derivation)"
+  },
+  "semaphore": {
+    "_comment": "W1-cold inserts exactly one commitment, so the group has one member and LeanIMT depth 0; Semaphore proves it at merkleTreeDepth 1, exactly as the frozen fixture test/fixtures/semaphore-valid-proof-depth1.json. Library and artifacts: experiments/workloads/w1/prover/.",
+    "merkle_tree_depth": "1",
+    "identity": "new Identity(secret), secret derived from the secret run seed (keys.semaphore_identity_secret)",
+    "core_library": "@semaphore-protocol/core 4.14.2"
+  },
+  "userop": {
+    "_comment": "Account verification gas limit (300,000) and Spend callGasLimit (60,000, the W1 application call) are the shared W1 values. B3-specific limits, fixed from trace measurements on 2026-09-14 before any reported result: the Bootstrap execution (execute -> CreditPool.deposit -> mirrorRoot) used 125,966 gas, so 160,000 keeps unused execution gas under EntryPoint v0.9.0 PENALTY_GAS_THRESHOLD (40,000; no 10% penalty) with margin; BootstrapPaymaster validation used 27,031 gas, so the shared W1 paymaster verification limit (60,000) is kept; CreditPaymaster validation (real Groth16 verification) used 253,403 gas, so B3's own fixture value PM_VERIFICATION_GAS_LIMIT = 400,000 (test/FunctionalCorrectnessFixture.sol) is used. Paymaster verification limits are not subject to the unused-gas penalty. Both B3 caps hold: requiredPrefund <= 0.005 ETH, maxFeePerGas <= 10 gwei, callGasLimit + verificationGasLimit <= 500,000 (CreditPaymaster.MAX_CREDIT_GAS).",
+    "bootstrap_call_gas_limit": "160000",
+    "bootstrap_paymaster_verification_gas_limit": "60000",
+    "spend_paymaster_verification_gas_limit": "400000",
+    "paymaster_post_op_gas_limit": "0",
+    "announce_and_fund_gas_limit": "300000"
+  },
+  "funding": {
+    "_comment": "Setup: the sponsor operator funds each B3 Paymaster's EntryPoint deposit with EntryPoint.depositTo (the B3 Paymasters have no deposit() helper). Same amount as the W1 Paymasters. The B3 Paymasters are NOT staked. address_zero_wei: the faucet sends 1 wei to address(0) so the fee burn does not pay a devnet-only 25,000-gas new-account charge (address(0) is non-empty on every public EVM chain); measured 2026-09-14: without it announceAndFund used 178,789 gas instead of 153,789 (exactly the 25,000-gas new-account charge).",
+    "paymaster_deposit": "100000000000000000",
+    "address_zero_wei": "1"
+  }
+}

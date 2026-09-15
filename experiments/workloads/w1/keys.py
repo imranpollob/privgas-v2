@@ -36,6 +36,7 @@ ROLES = (
     "established_wallet",  # the actor's pre-existing wallet W; never on chain in W1
     "block_producer",    # anvil coinbase, receives priority fees (never signs)
     "intruder",          # key for negative tests only
+    "announcement_ephemeral",  # B3: ephemeral key whose public key is announced; never transacts
 )
 
 
@@ -69,6 +70,16 @@ class RoleKeys:
 
 def role_keys(seed: int) -> RoleKeys:
     return RoleKeys(seed=seed, keys={r: derive_key(seed, r) for r in ROLES})
+
+
+def semaphore_identity_secret(seed: int, index: int = 0) -> str:
+    """B3: secret of the recipient's Semaphore v4 identity (``new Identity(secret)``).
+
+    Derived from the secret seed only; never written to disk. Its commitment is
+    public once deposited; the secret is what makes the Spend proof possible.
+    """
+    return hashlib.sha256(
+        f"privgas-v2/w1/b3-semaphore-identity/v1/{seed}/{index}".encode()).hexdigest()
 
 
 def faucet():

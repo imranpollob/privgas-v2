@@ -197,6 +197,10 @@ EMPTY_ANCHORS = {
     "established_wallet_address": None,
     "transaction_hash": None,
     "userop_hash": None,
+    "issuance_transaction_hash": None,
+    "issuance_userop_hash": None,
+    "credit_commitment": None,
+    "credit_nullifier": None,
     "public_event_record_ids": [],
 }
 

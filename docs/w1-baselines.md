@@ -1,9 +1,11 @@
 # W1 matched baselines: B0, B1, B2-Allowlist, B2-Signature
 
 Status: **implemented, hardened and measured on a local devnet (2026-09-14,
-final pre-Prompt-4 cleanup).** Schema 4.0.0. No privacy result is claimed anywhere in this
-document; it defines the baselines, their costs and their remaining
-differences.
+final pre-Prompt-4 cleanup; re-recorded under schema 5.0.0 on 2026-09-15 with
+identical transactions and costs).** No privacy result is claimed anywhere in
+this document; it defines the baselines, their costs and their remaining
+differences. The frozen B3 specimen (`B3-PrivGas-v1`) and the evaluation-chain
+profiles used to compare it with these baselines are in `docs/b3-evaluation.md`.
 
 - Contracts and Foundry tests: `baselines/w1_b0_b2/`
 - Live runner, bundler, calibration, accounting, recording, comparison:
@@ -47,7 +49,7 @@ runs) and by the Foundry/live tests:
 
 | Control | Value |
 |---|---|
-| Chain | anvil 1.4.1, chain id 31337, hardfork `prague`, EIP-170 enforced, automine |
+| Chain | anvil 1.4.1, chain id 31337, hardfork `prague`, automine; profile `eip170_standard` (EIP-170 enforced) or `b3_compat_local` (code-size limit 32,768, B3 contracts in the setup; identical B0–B2 workflow quantities, `docs/b3-evaluation.md` §2) |
 | Setup | identical transaction sequence in every variant (both Paymasters deployed and funded everywhere; beneficiary pre-funded) → identical contract addresses |
 | EntryPoint | eth-infinitism `EntryPoint`, commit `b36a1ed52ae00da6f8a4c8d50181e2877e4fa410` (tag `v0.9.0`), one deployment, same bytecode |
 | Account | `SimpleAccount` v0.9.0 via `SimpleAccountFactory`, same implementation address and bytecode, same counterfactual account |
@@ -170,8 +172,9 @@ no bundler subsidy; otherwise it fails. It writes the committable artifact
 
 | Recorded | Value |
 |---|---|
-| O, shape `execute_call` (non-empty callData: every measured W1 op) | **14,985 gas** |
+| O, shape `execute_call` (the W1 application call: every measured W1 op) | **14,985 gas** |
 | O, shape `empty_calldata` (deploy-only warm-up op) | **13,708 gas** |
+| O, shape `execute_pool_deposit` (B3 Bootstrap; `b3_compat_local` artifact only) | **19,776 gas** |
 | samples | 10 (B1 cold, B1 warm measured + warm-up, B2-Allowlist, B2-Signature) × 2 seeds, all equal within shape |
 | environment fingerprint | EntryPoint commit `b36a1ed5…`; deployed-bytecode sha256 of EntryPoint, SimpleAccountFactory, SimpleAccount, both Paymasters; bundler version `privgas-minibundler-v1`; bundle size 1; beneficiary pre-funded; chain id 31337; hardfork `prague`; anvil version |
 | also | creation timestamp, method, matched-config sha256, provisional PVG, seed **commitments** only |
@@ -200,14 +203,26 @@ must bump `BUNDLER_ID`. The exact-operation dry run remains available as
 Assumptions behind this separation: O is independent of the PVG value (PVG only
 changes calldata bytes and prefund amounts, never EntryPoint execution paths);
 O is constant within an op shape (verified across initCode present/absent,
-Paymaster absent/allowlist/signature, and calldata 900–1,188 bytes); bundles
-contain one op. A multi-op bundle or a new op shape needs recalibration.
+Paymaster absent/allowlist/signature/B3 CreditPaymaster, and calldata 900–1,380
+bytes); bundles contain one op. A multi-op bundle or a new op shape needs
+recalibration.
+
+**O is net of the executed call's gas refund (found 2026-09-15).** Measured O is
+derived from the receipt, which is net of refunds. The W1 application call
+transfers the account's whole token balance and earns the EIP-3529 4,800-gas
+SSTORE-clear refund; transferring `amount − 1` instead raises O from 14,985 to
+19,785, exactly 4,800 more. B3's Bootstrap call (`CreditPool.deposit`) clears
+nothing and calibrates to 19,776. Shapes are therefore keyed by the executed
+call (`calibration.op_shape`). One artifact exists per evaluation profile; the
+profile id and code-size limit are part of the fingerprint, so the standard
+artifact is refused on `b3_compat_local` and vice versa.
 
 **Subsidy assertion.** Reconciliation fails if the bundler's net is worse than
 −100 gas × price. A test re-injects the old 17.8k shortfall and confirms it is
 caught.
 
-Final representative runs (`20260915T002323Z`, experiment mode):
+Final representative runs (`20260915T012357Z`, experiment mode; identical to the
+archived 4.0.0 runs `20260915T002323Z`):
 
 | Variant | PVG | = 21,000 | + calldata gas (bytes) | + O | surplus | bundle gas | UserOp gas | **bundler net** |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -222,10 +237,11 @@ value (the earlier dry-run mode put it on B2-Signature instead).
 
 ## 6. REAL cost table
 
-Representative runs `20260915T002323Z-*` (experiment-mode PVG, schema 4.0.0;
-seed held privately). All values in **gwei**; raw wei in
+Representative runs `20260915T012357Z-*` (experiment-mode PVG, schema 5.0.0,
+profile `eip170_standard`; seed held privately; every transaction hash and cost
+summary value identical to the archived 4.0.0 runs `20260915T002323Z-*`). All values in **gwei**; raw wei in
 `data/private/baselines/<experiment>/<run>/w1_cost_reconciliation.json`;
-summary in `results/w1-baselines/20260915T002323Z/comparison.json`. Effective
+summary in `results/w1-baselines/20260915T012357Z/comparison.json`. Effective
 gas price 2 gwei everywhere (1 burned, 1 priority). Balances are compared from
 the start of the measured workflow (after warm-up for W1-warm).
 
@@ -310,16 +326,21 @@ row (sent by the same wallet) before the op, and the op naming the Paymaster;
 B2-Signature — the same funding evidence and op, and **no** authorization row.
 No inference is implemented.
 
-## 7a. Recorder integration (schema 4.0.0)
+## 7a. Recorder integration (schema 5.0.0)
 
 Measured runs (`data_origin: "measured"`, gitignored):
 `data/public/baselines/{b0-w1-cold, b1-w1-cold, b1-w1-warm,
-b2-allowlist-w1-cold, b2-signature-w1-cold}/20260915T002323Z-*/` with 18 / 22 /
-26 / 21 / 20 public rows and 0 / 1 / 2 / 1 / 1 bundler rows. B0 has no
+b2-allowlist-w1-cold, b2-signature-w1-cold}/20260915T012357Z-*/` with 18 / 22 /
+26 / 21 / 20 public rows and 0 / 1 / 2 / 1 / 1 bundler rows. The same variants
+on `b3_compat_local` (`data/public/baselines/b3-compat-local/...`) have 30 / 34 /
+38 / 33 / 32 public rows: the 12 extra rows are the B3 setup (7 deployments, 2
+`depositTo` + 2 `Deposited`, 1 wei to `address(0)`). B0 has no
 `observer_a2/`; B1 rows carry no Paymaster; B2 variants carry distinct
 `baseline_id`s and Paymaster addresses; bundler data stays in its own
-directory. Leakage self-check: 0 findings over 9 runs. The 3.0.0 measured runs
-were moved to `data/private/archive/schema-3.0.0/`. Attacker-side readers now
+directory. Leakage self-check: 0 findings over 15 runs (11 measured, 4
+synthetic). The 4.0.0 measured runs were moved to
+`data/private/archive/schema-4.0.0/` and the 3.0.0 runs to
+`data/private/archive/schema-3.0.0/`. Attacker-side readers now
 refuse `data/raw/` as well as `data/private/`, and raw chain dumps no longer
 carry role-naming step labels.
 
@@ -351,7 +372,8 @@ integrated.
   `paymasterPostOpGasLimit` (each with an accepted control), plus a helper
   sanity test; matching of B1 / B2 ops and account code. No cost figure comes
   from Forge.
-- Live and static (`experiments/workloads/w1/tests`, 51): all variants' success
+- Live and static (`experiments/workloads/w1/tests`, 93 = 51 B0–B2 + 42 B3 in
+  `test_b3_live.py`, listed in `docs/b3-evaluation.md` §12): all variants' success
   and rejection paths; warm-up excluded from cost; bundler subsidy within
   tolerance; PVG decomposition equals the mined bytes; subsidy assertion
   catches a re-injected shortfall; no unused-gas penalty; **experiment runs take
@@ -359,12 +381,14 @@ integrated.
   gas; a changed fingerprint raises `RecalibrationRequired`; calibration with a
   fresh seed reproduces the artifact**; **R1 trace completeness (every mined tx
   recorded) and per-baseline funding evidence; ground truth separates economic
-  funder, immediate payer and operation; cost window private**; 20 fairness
-  checks; determinism; recording, regeneration, A2-only rejection, leakage
-  self-check; calibration artifact consistency; dependency pin.
-- Recorder (`experiments/tests`, 116): schema 4.0.0 incl. payer-kind rule,
-  `payer_conflation`, pre-4.0.0 field rejection, content-derived `trace_phase`,
-  raw-path reader guard.
+  funder, immediate payer and operation; cost window private**; fairness checks
+  (23 on `eip170_standard`, 25 with B3 on `b3_compat_local`); determinism;
+  recording, regeneration, A2-only rejection, leakage self-check; calibration
+  artifact consistency for both profiles; dependency pin.
+- Recorder (`experiments/tests`, 125): schema 5.0.0 incl. payer-kind rule,
+  `payer_conflation`, pre-5.0.0 version rejection, content-derived `trace_phase`
+  (including the B3 classes), R2 anchor rules, retired `B3` id, raw-path reader
+  guard.
 
 ## 10. Remaining fairness differences
 
@@ -413,9 +437,11 @@ details and `scripts/env-report.sh` output.
 
 ## 13. History
 
-Schema 3.0.0 runs (per-sample exact-bundle PVG dry runs; R1 anchored on the
-Paymaster contract; no setup-time public events) are archived under
-`data/private/archive/schema-3.0.0/`. The first version of these baselines
+Schema 4.0.0 runs (identical transactions and costs; B3 not yet measurable,
+no evaluation profile, no R2 anchors) are archived under
+`data/private/archive/schema-4.0.0/`. Schema 3.0.0 runs (per-sample exact-bundle
+PVG dry runs; R1 anchored on the Paymaster contract; no setup-time public
+events) are archived under `data/private/archive/schema-3.0.0/`. The first version of these baselines
 (schema 2.0.0: a single `B2` allowlist baseline, fixed preVerificationGas,
 unfunded beneficiary) and the
 synthetic-fixture corrections it forced are recorded in `docs/decision-log.md`

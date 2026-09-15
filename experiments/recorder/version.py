@@ -36,6 +36,16 @@ Rules:
 
 from __future__ import annotations
 
+#: 5.0.0 (2026-09-14): the frozen B3 specimen becomes measurable. baseline_id
+#: "B3" renamed "B3-PrivGas-v1"; public_events gains event types
+#: stealth_announcement / sponsorship_eligibility and calldata classes
+#: stealth_announce_and_fund / fee_burn / paymaster_sponsorship / pool_root_update,
+#: with deterministic trace_phase rules for them (privacy_pool_event rows now
+#: need a pool calldata class); ground_truth public_anchors gains
+#: issuance_transaction_hash / issuance_userop_hash / credit_commitment /
+#: credit_nullifier (the R2 join bridge), required non-null for an observed R2
+#: label and null for baselines without a credit system. MAJOR: an enum value
+#: was renamed and a closed sub-object gained required keys.
 #: 4.0.0 (2026-09-14): R1 refined -- ground_truth funding_wallet_id renamed
 #: economic_funding_source_id, immediate_gas_payer_kind added, public_anchors
 #: funding_address split into economic_funding_address and
@@ -50,10 +60,10 @@ from __future__ import annotations
 #: MAJOR because a bundler_private field was removed/renamed and field tier
 #: semantics changed. 1.0.0 rows (synthetic fixtures only; no measured 1.0.0
 #: data ever existed) are not readable by this code.
-SCHEMA_VERSION = "4.0.0"
+SCHEMA_VERSION = "5.0.0"
 
 #: Versions this code can read and validate. Explicit allow-list on purpose.
-SUPPORTED_SCHEMA_VERSIONS = frozenset({"4.0.0"})
+SUPPORTED_SCHEMA_VERSIONS = frozenset({"5.0.0"})
 
 STREAM_GROUND_TRUTH = "ground_truth"
 STREAM_PUBLIC_EVENTS = "public_events"

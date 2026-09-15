@@ -216,6 +216,17 @@ real broadcast attempt.
       `Demo.s.sol`'s `vm.prank`-based flow was explicitly excluded as
       evidence; a real signed-broadcast attempt was made instead.
 
+## Evaluation-only deployment (cross-reference, added 2026-09-15)
+
+The findings above are unchanged: the frozen `PoseidonT3` still exceeds EIP-170
+and the ordinary-key deployment of the credit path still fails on an
+EIP-170-enforcing chain (re-checked live by
+`experiments/workloads/w1/tests/test_b3_live.py`). For privacy evaluation only,
+`docs/b3-evaluation.md` deploys the same unmodified contracts on a separately
+labelled local profile (`b3_compat_local`: NON-PRODUCTION,
+NON-EIP-170-DEPLOYABLE-AS-BUILT, PRIVACY-EVALUATION-ONLY) that raises anvil's
+code-size limit. That is not a deployability result and not a fix.
+
 ## No novelty or security claims
 
 This report characterizes the vendored B3 specimen as found. It makes no

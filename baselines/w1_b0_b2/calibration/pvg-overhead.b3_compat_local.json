@@ -1,19 +1,28 @@
 {
   "artifact_version": "1",
   "bundle_size": 1,
-  "created_at_utc": "2026-09-15T01:23:24Z",
+  "created_at_utc": "2026-09-15T01:23:31Z",
   "entrypoint_unmeasured_overhead_by_shape": {
     "empty_calldata": 13708,
-    "execute_call": 14985
+    "execute_call": 14985,
+    "execute_pool_deposit": 19776
   },
   "environment_fingerprint": {
     "anvil_version": "anvil Version: 1.4.1-v1.4.1\nCommit SHA: cf7746048646f2ecff48246dd61e265e49ab16f0\nBuild Timestamp: 2025-10-14T13:51:29.003531000Z (1760449889)\nBuild Profile: maxperf",
+    "b3_source_commit": "02a3f0abdb979446545aa87149080bfb44e43a3e",
     "beneficiary_prefunded": true,
     "bundle_size": 1,
     "bundler_version": "privgas-minibundler-v1",
     "chain_id": 31337,
-    "code_size_limit": 24576,
+    "code_size_limit": 32768,
     "deployed_bytecode_sha256": {
+      "B3/AnnouncementRegistry": "11cc42b022d50bc4a07b7ac6c6d2c8aaa3df7a03f0f10e49f1f0119043ecf6e7",
+      "B3/BootstrapPaymaster": "88be4c4a30a9810f5153c158dd6ea99024cc6a4143beb390c8d5622efe43c8c5",
+      "B3/CreditPaymaster": "3993f2a08e54e014cc326d225e5d9589ba42e817acad78c5f9fc9e0b995d0a58",
+      "B3/CreditPool": "9e7795eaf066fee0cae122ae1bd6adbf061e4c20b82af1b556e421e780b2a300",
+      "B3/MockAnnouncer": "7be5fd146dcd3cf62aaa464f6048353f2aaee17ce7389471a18ce8bc885cc4e8",
+      "B3/PoseidonT3": "97928276943697e45bdbec4536ad517dc7115933b71cb9157bb0c002614d9be6",
+      "B3/SemaphoreVerifier": "6e891e7b8c4be800a64a3537ec7fee511bdf37fd0af5334be4a34c64330d30b0",
       "EntryPoint": "3f493ef5c05c0e2d651bdebbe118ac0dd37385652a729cd1383d54606a6ccdb7",
       "ObservablePaymaster": "57e69aa98de8442b8c17636aa267013ddd73b56a8cdc04e248b00b31f37dc3e0",
       "SignatureVerifyingPaymaster": "cc4febdddbf0df2ffb1bc72da7711ad64a3d945f999866ccf32f0ebac7bf54a5",
@@ -21,22 +30,26 @@
       "SimpleAccountFactory": "973a3066a222f2a02807e7649fb79517253d9c7c8439cb30bd27b40bfad96428"
     },
     "entrypoint_source_commit": "b36a1ed52ae00da6f8a4c8d50181e2877e4fa410",
-    "evaluation_profile": "eip170_standard",
+    "evaluation_profile": "b3_compat_local",
     "hardfork": "prague"
   },
   "evaluation_profile": {
-    "code_size_limit": 24576,
-    "description": "anvil defaults: EIP-170 / EIP-3860 enforced; B3 not deployable",
-    "eip170_enforced": true,
-    "includes_b3_infrastructure": false,
-    "profile_id": "eip170_standard",
-    "profile_labels": []
+    "code_size_limit": 32768,
+    "description": "local evaluation chain with anvil --code-size-limit 32768 so the frozen, unmodified B3 contracts deploy; identical setup (W1 + B3 infrastructure) for every baseline run on this profile",
+    "eip170_enforced": false,
+    "includes_b3_infrastructure": true,
+    "profile_id": "b3_compat_local",
+    "profile_labels": [
+      "NON-PRODUCTION",
+      "NON-EIP-170-DEPLOYABLE-AS-BUILT",
+      "PRIVACY-EVALUATION-ONLY"
+    ]
   },
   "matched_config_sha256": "3b0e4171a6aedaf84af1230a3133342f0009f66378c71a3befae5ca03eb4f6a0",
   "method": "break_even_calibration_v1 (exact-bundle evm_snapshot dry run)",
   "notes": "O = bundle receipt gasUsed - (UserOperationEvent.actualGasUsed - PVG) - 21,000 - EIP-2028 calldata gas of the exact bundle. Valid only for the fingerprinted environment; experiment runs refuse to use it otherwise.",
   "provisional_pre_verification_gas": 50000,
-  "regenerate_with": "python3 -m experiments.workloads.w1.calibrate --profile eip170_standard --seed <s> ...",
+  "regenerate_with": "python3 -m experiments.workloads.w1.calibrate --profile b3_compat_local --seed <s> ...",
   "samples": [
     {
       "dry_run_bundle_gas_used": 288783,
@@ -84,6 +97,24 @@
       "variant": "B2-Signature W1-cold"
     },
     {
+      "dry_run_bundle_gas_used": 392142,
+      "dry_run_calldata_bytes": 1028,
+      "entrypoint_unmeasured_overhead": 19776,
+      "label": "w3_bootstrap_bundle",
+      "op_shape": "execute_pool_deposit",
+      "seed_commitment_sha256": "cbc5a1e8d3b1cde261c3342143c2225f1a64736d5ee58e55a4dc9a9c0f06da17",
+      "variant": "B3-PrivGas-v1 W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 372009,
+      "dry_run_calldata_bytes": 1380,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w4_spend_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "cbc5a1e8d3b1cde261c3342143c2225f1a64736d5ee58e55a4dc9a9c0f06da17",
+      "variant": "B3-PrivGas-v1 W1-cold"
+    },
+    {
       "dry_run_bundle_gas_used": 288819,
       "dry_run_calldata_bytes": 996,
       "entrypoint_unmeasured_overhead": 14985,
@@ -127,6 +158,24 @@
       "op_shape": "execute_call",
       "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
       "variant": "B2-Signature W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 392154,
+      "dry_run_calldata_bytes": 1028,
+      "entrypoint_unmeasured_overhead": 19776,
+      "label": "w3_bootstrap_bundle",
+      "op_shape": "execute_pool_deposit",
+      "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
+      "variant": "B3-PrivGas-v1 W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 372069,
+      "dry_run_calldata_bytes": 1380,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w4_spend_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
+      "variant": "B3-PrivGas-v1 W1-cold"
     }
   ],
   "seed_count": 2

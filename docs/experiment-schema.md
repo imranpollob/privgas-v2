@@ -290,7 +290,7 @@ evidence of distinct honest participants.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3..B6). The experimental condition, known to the attacker by construction. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4..B6). The experimental condition, known to the attacker by construction. |
 | `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | required | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
@@ -333,6 +333,13 @@ denylist as an alias. The funding source is defined one hop back (the wallet
 that directly funded the charged balance); where that wallet's own ETH came
 from (e.g. a devnet faucet) is part of the public trace, not of the label.
 
+**B3-PrivGas-v1 (5.0.0).** Both of its operations are charged to a Paymaster
+deposit (`paymaster_entrypoint_deposit`: BootstrapPaymaster for Bootstrap,
+CreditPaymaster for Spend); the economic funding source of both is the sponsor
+wallet that funded those deposits with `EntryPoint.depositTo`. The asset sender's
+forwarded `vMin` pays no gas and the admission fee is burned, so neither is a
+one-hop funder (`docs/b3-evaluation.md` §8).
+
 ### 5.1 Relation labels
 
 The three relation labels have one uniform shape so evaluation code can treat
@@ -364,6 +371,20 @@ uses `"absent"`.
 
 ---
 
+### 5.2 R2 anchors (5.0.0)
+
+For a baseline with a credit lifecycle, `public_anchors` carries the public
+values the post-freeze R2 join needs: `issuance_transaction_hash` and
+`issuance_userop_hash` (the operation that issued the credit — B3's Bootstrap),
+`credit_commitment` (the deposited commitment) and `credit_nullifier` (the
+nullifier revealed at redemption). All four are public on chain; **which
+issuance a redemption consumed** is the secret, and it exists only in this
+private stream (`issuance_to_redemption_label`, `credit_id`, `issuance_id`).
+The validator requires all four for an observed R2 label and forbids them for
+baselines without a credit system. B3 records two ground-truth rows per run:
+the Spend operation (R2 observed) and the Bootstrap operation (R2 `absent` —
+it redeems nothing; the negative is kept).
+
 ## 6. `public_events.jsonl` — tiers A0 / A1
 
 Only values recoverable by someone with an ordinary archive node and, for A1,
@@ -393,6 +414,18 @@ native value moved into an account or EntryPoint deposit, by whomever). Whether
 a row lies inside the measured cost window is experiment metadata and is
 written privately (`data/private/.../w1_cost_window.json`), never in this
 stream.
+
+**B3-PrivGas-v1 rows (5.0.0).** `announceAndFund` → `eoa_transaction` /
+`stealth_announce_and_fund` [funding], `stealth_announcement` [authorization],
+two `sponsorship_eligibility` [authorization], `native_transfer` registry →
+account (forwarded `vMin`) [funding] and `native_transfer` / `fee_burn` registry
+→ `address(0)` [authorization]; `EntryPoint.depositTo` → `paymaster_event` /
+`paymaster_deposit` [funding] with the Paymaster in `subject_account`; inside
+bundles `paymaster_event` / `paymaster_sponsorship`, `privacy_pool_event` /
+`pool_root_update` (`merkle_root`), `pool_deposit` (`commitment`, `merkle_root`)
+and `pool_redeem` (`nullifier`, the proof's `merkle_root`, `proof_metadata`)
+[authorization, funding, authorization]. Every UserOperation row keeps its real
+`sender`, so Bootstrap and Spend from one account are visible as such.
 
 **Row structure of a real W1 run** (`experiments/workloads/w1/recording.py`):
 one row per transaction, classified from on-chain content only
@@ -434,7 +467,7 @@ code rather than frozen into the raw record.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3..B6). The experimental condition, known to the attacker by construction. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4..B6). The experimental condition, known to the attacker by construction. |
 | `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | `null` ok | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
@@ -479,7 +512,7 @@ code rather than frozen into the raw record.
 | `revert_reason_class` | public | A0 | `null` ok | Coarse class of the public revert reason. A class rather than the raw string, which can carry arbitrary content. |
 | `outcome` | public | A0 | required | Overall disposition of the row's subject. |
 | `event_type` | public | A0 | required | What kind of observation this row is. |
-| `trace_phase` | public | A0 | required | Coarse content-derived classification: infrastructure (deployments), funding (native value into an account or EntryPoint deposit), authorization (paymaster policy calls), application (asset transfers), settlement (bundles and UserOperation outcomes). A deterministic function of event_type and calldata_class, never a role or intent label; whether a row lies in a measured cost window is recorded privately, not here. Added in 4.0.0 so the complete public trace -- including setup-time transactions -- is recorded. |
+| `trace_phase` | public | A0 | required | Coarse content-derived classification: infrastructure (deployments), funding (native value into an account or EntryPoint deposit; a stealth announce-and-fund call; a credit pool deposit), authorization (paymaster policy calls, sponsorship and eligibility logs, stealth announcements, fee burns, pool root updates and credit redemptions), application (asset transfers), settlement (bundles and UserOperation outcomes). A deterministic function of event_type and calldata_class, never a role or intent label; whether a row lies in a measured cost window is recorded privately, not here. Added in 4.0.0 so the complete public trace -- including setup-time transactions -- is recorded. |
 | `commitment` | public | A0 | `null` ok | Publicly emitted commitment, 0x 32-byte hex. Public because it is on chain -- recording it makes no claim that it is unlinkable. |
 | `merkle_root` | public | A0 | `null` ok | Publicly visible Merkle root the operation proved against. |
 | `nullifier` | public | A0 | `null` ok | Publicly emitted nullifier. |
@@ -513,7 +546,7 @@ Derived from `docs/research-plan.md` §5 and enforced by the validator
 | B1 sender-funded smart account | yes | yes | no | no | no |
 | B2-Allowlist observable allowlist Paymaster (auxiliary) | yes | yes | yes | no | no |
 | B2-Signature signature-verifying Paymaster | yes | yes | yes | no | no |
-| B3 PrivGas v1 | yes | yes | yes | yes | yes |
+| B3-PrivGas-v1 frozen PrivGas v1 specimen (`b3_compat_local` profile only) | yes | yes | yes | yes | yes |
 | B4 independent credit (reserved) | yes | yes | yes | yes | yes |
 | B5 prior-art prepaid (reserved) | yes | yes | yes | yes | yes |
 | B6 shielded-pool reference (reserved, provisional) | no | no | no | yes | yes |
@@ -523,7 +556,11 @@ row carrying a `userop_hash` fails, because a fabricated UserOperation would
 make B0 look like an account-abstraction baseline and would invent exactly the
 sponsorship metadata D1 exists to isolate. The B0, B1, B2-Allowlist and
 B2-Signature rows were confirmed against the real implementations
-(`baselines/w1_b0_b2`, 2026-09-14): all five flags held for each. Rows for B4–B6 are reserved: the capability flags encode the plan,
+(`baselines/w1_b0_b2`, 2026-09-14): all five flags held for each. The
+B3-PrivGas-v1 row was confirmed against measured runs of the unmodified specimen
+(`docs/b3-evaluation.md`, 2026-09-15): it uses ERC-4337, the in-repo bundler, two
+Paymasters, a credit lifecycle, and publishes commitment, root, nullifier and
+proof metadata. Rows for B4–B6 are reserved: the capability flags encode the plan,
 not an implementation, and B6's in particular must be confirmed against real
 code before use.
 
@@ -565,7 +602,7 @@ which wrongly made a public on-chain value look A2-only.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3..B6). The experimental condition, known to the attacker by construction. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4..B6). The experimental condition, known to the attacker by construction. |
 | `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | `null` ok | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
@@ -733,9 +770,26 @@ it as a privacy finding.
 
 ## 9. Schema versioning
 
-`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`4.0.0`**.
+`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`5.0.0`**.
 
 ### 9.0 Change log
+
+- **`5.0.0`** (2026-09-15) — the frozen B3 specimen becomes measurable
+  (`docs/b3-evaluation.md`). MAJOR because an enum value was renamed and a
+  closed sub-object gained required keys: `baseline_id` `"B3"` →
+  `"B3-PrivGas-v1"` (the id names the unmodified specimen at commit
+  `02a3f0ab…`); `public_events` gains event types `stealth_announcement` and
+  `sponsorship_eligibility` and calldata classes `stealth_announce_and_fund`,
+  `fee_burn`, `paymaster_sponsorship` and `pool_root_update`, each with one
+  deterministic `trace_phase` (a `privacy_pool_event` without a pool class is
+  now rejected); `ground_truth.public_anchors` gains `issuance_transaction_hash`,
+  `issuance_userop_hash`, `credit_commitment` and `credit_nullifier` — required
+  for an observed R2 label, null for baselines without a credit system (§5.2).
+  Runs gained an evaluation-chain profile (`eip170_standard`,
+  `b3_compat_local`) recorded in manifests; compat-profile runs use the
+  experiment-id prefix `baselines/b3-compat-local/`. 4.0.0 measured runs were
+  archived under `data/private/archive/schema-4.0.0/` after identical
+  regeneration was confirmed; synthetic examples were regenerated.
 
 - **`4.0.0`** (2026-09-14) — final pre-Prompt-4 cleanup. MAJOR because fields
   were renamed/split: `ground_truth.funding_wallet_id` →
@@ -827,7 +881,7 @@ ways, all deliberate:
    `open()`, and the import hook in `experiments/_boundary.py` is defence in
    depth only.
 3. **The seed commitment is binding, not hiding** — §8.3.
-4. **Synthetic examples are not measurements.** Real B0–B2 exist
+4. **Synthetic examples are not measurements.** Real B0–B2 and B3-PrivGas-v1 exist
    (`baselines/w1_b0_b2`, runner `experiments/workloads/w1`) and record
    `data_origin: "measured"`. The example runs under
    `experiments/recorder/examples/` remain **synthetic fixtures**, marked
@@ -863,3 +917,9 @@ ways, all deliberate:
 11. **Trace phases are coarse.** `trace_phase` is derived from content only, so
     it cannot say *why* ETH moved; distinguishing a gas-funding transfer from
     any other native transfer is left to the analysis, as it must be.
+12. **B3-PrivGas-v1 is recorded only on a non-production chain profile.**
+    `b3_compat_local` raises anvil's code-size limit so the frozen PoseidonT3
+    (29,315 bytes) deploys; the records say nothing about deployability on an
+    EIP-170 network, and the B3 Paymasters are unstaked on a bundler that
+    enforces no ERC-7562 rules (`docs/b3-evaluation.md`). The current runs use a
+    single witness (anonymity set 1) and no root contention.

@@ -22,15 +22,30 @@ ENTRYPOINT_VERSION = "0.9.0"
 ENTRYPOINT_SOURCE_COMMIT = "b36a1ed52ae00da6f8a4c8d50181e2877e4fa410"
 ENTRYPOINT_SOURCE_REPO = "https://github.com/eth-infinitism/account-abstraction"
 
-#: (baseline_id, workload_id) -> experiment_id. B0 has no warm variant (an EOA
-#: has nothing to pre-deploy); B2 warm variants are not implemented (optional,
-#: no new semantics).
+#: Evaluation-chain profiles (profiles.py).
+STANDARD_PROFILE = "eip170_standard"
+B3_COMPAT_PROFILE = "b3_compat_local"
+B3_BASELINE_ID = "B3-PrivGas-v1"
+
+#: (baseline_id, workload_id) -> experiment_id on the eip170_standard profile.
+#: B0 has no warm variant (an EOA has nothing to pre-deploy); B2 warm variants
+#: are not implemented (optional, no new semantics). B3 cannot run here: its
+#: frozen PoseidonT3 exceeds EIP-170.
 EXPERIMENT_IDS = {
     ("B0", "W1-cold"): "baselines/b0-w1-cold",
     ("B1", "W1-cold"): "baselines/b1-w1-cold",
     ("B1", "W1-warm"): "baselines/b1-w1-warm",
     ("B2-Allowlist", "W1-cold"): "baselines/b2-allowlist-w1-cold",
     ("B2-Signature", "W1-cold"): "baselines/b2-signature-w1-cold",
+}
+
+#: The same variants plus B3 on the b3_compat_local profile. A separate
+#: experiment-id namespace, so runs on different chain configurations are never
+#: pooled by accident.
+B3_COMPAT_EXPERIMENT_IDS = {
+    **{v: "baselines/b3-compat-local/" + e.split("/", 1)[1]
+       for v, e in EXPERIMENT_IDS.items()},
+    (B3_BASELINE_ID, "W1-cold"): "baselines/b3-compat-local/b3-privgas-v1-w1-cold",
 }
 
 #: run_id suffixes must be a single [a-z0-9]{1,16} token (RE_RUN_ID).
@@ -40,12 +55,33 @@ RUN_ID_SUFFIX = {
     ("B1", "W1-warm"): "b1warm",
     ("B2-Allowlist", "W1-cold"): "b2allowcold",
     ("B2-Signature", "W1-cold"): "b2sigcold",
+    (B3_BASELINE_ID, "W1-cold"): "b3cold",
 }
 
 PAYMASTER_OF = {
     "B2-Allowlist": "ObservablePaymaster",
     "B2-Signature": "SignatureVerifyingPaymaster",
+    # The Paymaster of B3's measured W1 application operation (Spend). B3's
+    # Bootstrap operation is sponsored by BootstrapPaymaster.
+    B3_BASELINE_ID: "CreditPaymaster",
 }
+
+#: Every Paymaster contract that can exist in a W1 environment.
+ALL_PAYMASTERS = ("ObservablePaymaster", "SignatureVerifyingPaymaster",
+                  "BootstrapPaymaster", "CreditPaymaster")
+
+
+def experiment_ids(profile_id: str = STANDARD_PROFILE) -> Dict[tuple, str]:
+    if profile_id == STANDARD_PROFILE:
+        return EXPERIMENT_IDS
+    if profile_id == B3_COMPAT_PROFILE:
+        return B3_COMPAT_EXPERIMENT_IDS
+    raise ValueError(f"unknown evaluation profile {profile_id!r}")
+
+
+def experiment_id(baseline_id: str, workload_id: str,
+                  profile_id: str = STANDARD_PROFILE) -> str:
+    return experiment_ids(profile_id)[(baseline_id, workload_id)]
 
 
 @dataclass(frozen=True)

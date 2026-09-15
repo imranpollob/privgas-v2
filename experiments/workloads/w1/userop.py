@@ -108,6 +108,7 @@ def unpack(packed: Tuple[Any, ...]) -> Dict[str, Any]:
         "paymaster": None, "paymaster_verification_gas_limit": None,
         "paymaster_post_op_gas_limit": None,
     }
+    out["paymaster_and_data"] = pmd
     out["paymaster_signature_present"] = False
     if len(pmd) >= 52:
         out["paymaster"] = to_checksum_address("0x" + pmd[:20].hex())

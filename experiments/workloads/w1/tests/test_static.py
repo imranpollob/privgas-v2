@@ -59,7 +59,7 @@ class TestCalibrationArtifact(unittest.TestCase):
         from experiments.workloads.w1.artifacts import load_all
         artifact = calibration.load_artifact(REPO_ROOT)
         by_shape = artifact["entrypoint_unmeasured_overhead_by_shape"]
-        self.assertEqual(set(by_shape), set(calibration.SHAPES))
+        self.assertEqual(set(by_shape), set(calibration.SHAPES_BY_PROFILE["eip170_standard"]))
         for s in artifact["samples"]:
             self.assertEqual(s["entrypoint_unmeasured_overhead"], by_shape[s["op_shape"]])
         self.assertGreaterEqual(artifact["seed_count"], 2)
@@ -78,8 +78,19 @@ class TestCalibrationArtifact(unittest.TestCase):
         if anvil.returncode == 0 and (REPO_ROOT / "baselines/w1_b0_b2/out").is_dir():
             fp = calibration.environment_fingerprint(
                 load_config(REPO_ROOT), load_all(REPO_ROOT), anvil.stdout.strip())
-            for shape in calibration.SHAPES:
+            for shape in calibration.SHAPES_BY_PROFILE["eip170_standard"]:
                 calibration.overhead_for(artifact, shape, fp)
+            if (REPO_ROOT / "baselines/b3_eval/out").is_dir():
+                from experiments.workloads.w1 import b3, profiles
+                compat = calibration.load_artifact(REPO_ROOT, "b3_compat_local")
+                fp3 = calibration.environment_fingerprint(
+                    load_config(REPO_ROOT), load_all(REPO_ROOT), anvil.stdout.strip(),
+                    profiles.B3_COMPAT, b3.load_b3_all(REPO_ROOT))
+                for shape in calibration.SHAPES_BY_PROFILE["b3_compat_local"]:
+                    calibration.overhead_for(compat, shape, fp3)
+                # One environment's O must never price another environment's ops.
+                with self.assertRaises(calibration.RecalibrationRequired):
+                    calibration.overhead_for(artifact, "execute_call", fp3)
 
 
 class TestKeys(unittest.TestCase):
