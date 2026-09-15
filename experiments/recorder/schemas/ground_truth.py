@@ -19,11 +19,21 @@ Scope discipline enforced here:
   ``public_anchors`` -- inside this private stream, where it belongs.
 
 * **Multiple accounts are not multiple people.** ``actor_id`` is the identity;
-  ``stealth_account_id``, ``established_wallet_id`` and ``funding_wallet_id``
-  are accounts. Many rows may share one ``actor_id``. Nothing in this schema
+  ``stealth_account_id``, ``established_wallet_id`` and
+  ``economic_funding_source_id`` are accounts. Many rows may share one ``actor_id``. Nothing in this schema
   or in the loaders assumes a 1:1 mapping, and evaluation code must not infer
   one. Likewise, multiple ``credit_id`` values may belong to one actor:
   distinct commitments are not evidence of distinct honest participants.
+
+* **Economic funder is not the immediate gas payer (schema 4.0.0).** R1 is
+  "economic funding source <-> operation". The *immediate gas payer* -- the
+  balance the execution mechanism charges: an EOA balance, a smart account's
+  EntryPoint deposit, or a Paymaster's EntryPoint deposit -- is public context
+  (``immediate_gas_payer_kind`` + ``public_anchors.immediate_gas_payer_address``).
+  The *economic funding source* is the wallet whose ETH supplied that balance
+  (``economic_funding_source_id`` + ``public_anchors.economic_funding_address``).
+  A Paymaster contract is never an economic funding source: that would turn R1
+  into the intentionally public, trivial "which Paymaster" question.
 
 * **Negative and failed cases are data.** A relation whose answer is "no link
   for this subject" is recorded with ``status="absent"``, not dropped. A
@@ -46,6 +56,7 @@ from ..fieldtypes import (
     looks_like_onchain_identifier,
 )
 from .common import (
+    CLASS_PUBLIC,
     CLASS_SECRET,
     FieldSpec,
     StreamSchema,
@@ -70,6 +81,13 @@ LABEL_STATUSES = ("observed", "absent", "not_applicable")
 
 SUBJECT_KINDS = ("operation", "stealth_account", "issuance", "funding_event")
 
+#: What the execution mechanism directly charges for gas (public context).
+IMMEDIATE_GAS_PAYER_KINDS = (
+    "eoa_balance",                       # a plain transaction's sender balance
+    "smart_account_entrypoint_deposit",  # ERC-4337 op without a Paymaster
+    "paymaster_entrypoint_deposit",      # ERC-4337 op sponsored by a Paymaster
+)
+
 
 def check_opaque_id(value, *, field, stream):
     """An opaque hidden handle: lowercase, underscore-separated, not on-chain."""
@@ -85,6 +103,10 @@ def check_opaque_id(value, *, field, stream):
 
 def _check_seed(value, *, field, stream):
     check_int(value, field=field, stream=stream, minimum=0, maximum=2 ** 64 - 1)
+
+
+def _check_immediate_payer_kind(value, *, field, stream):
+    check_enum(value, field=field, stream=stream, allowed=IMMEDIATE_GAS_PAYER_KINDS)
 
 
 def _check_subject_kind(value, *, field, stream):
@@ -176,7 +198,8 @@ def _make_label_checker(expected_relation: str):
 
 PUBLIC_ANCHOR_FIELDS = {
     "stealth_account_address": check_address,
-    "funding_address": check_address,
+    "economic_funding_address": check_address,
+    "immediate_gas_payer_address": check_address,
     "asset_sender_address": check_address,
     "established_wallet_address": check_address,
     "transaction_hash": check_hash32,
@@ -261,6 +284,33 @@ def _rule_credit_fields_match_relation_r2(record: Mapping[str, Any],
                 code="baseline_capability_violation")
 
 
+def _rule_payer_kind_matches_baseline(record: Mapping[str, Any], stream: str) -> None:
+    """The immediate payer kind follows from the baseline's mechanism, and a
+    Paymaster contract may never double as the economic funding source."""
+    from .. import baselines
+
+    caps = baselines.get(record["baseline_id"])
+    expected = ("paymaster_entrypoint_deposit" if caps.uses_paymaster
+                else "smart_account_entrypoint_deposit" if caps.uses_erc4337
+                else "eoa_balance")
+    if record["immediate_gas_payer_kind"] != expected:
+        raise RecordValidationError(
+            f"baseline {caps.baseline_id} charges gas to a {expected}, not "
+            f"{record['immediate_gas_payer_kind']!r}", stream=stream,
+            field="immediate_gas_payer_kind", code="baseline_capability_violation")
+    anchors = record.get("public_anchors")
+    if (isinstance(anchors, dict) and expected == "paymaster_entrypoint_deposit"
+            and anchors.get("economic_funding_address") is not None
+            and anchors.get("economic_funding_address")
+            == anchors.get("immediate_gas_payer_address")):
+        raise RecordValidationError(
+            "the economic funding source equals the Paymaster (immediate gas "
+            "payer). R1 is about the wallet that funded the Paymaster, not the "
+            "public Paymaster contract",
+            stream=stream, field="public_anchors.economic_funding_address",
+            code="payer_conflation")
+
+
 def _rule_hidden_ids_distinct_from_anchors(record: Mapping[str, Any],
                                            stream: str) -> None:
     """No hidden handle may equal one of its own public anchors."""
@@ -304,13 +354,28 @@ SCHEMA = StreamSchema(
         FieldSpec("established_wallet_id", check_opaque_id, CLASS_SECRET, "none",
                   "The actor's pre-existing, publicly known wallet (W). "
                   + _HIDDEN_ID_DOC, nullable=True, na_allowed=True),
-        FieldSpec("funding_wallet_id", check_opaque_id, CLASS_SECRET, "none",
-                  "The account that supplied gas funding / sponsorship (P). "
-                  + _HIDDEN_ID_DOC, nullable=True, na_allowed=True),
+        FieldSpec("economic_funding_source_id", check_opaque_id, CLASS_SECRET,
+                  "none",
+                  "The ECONOMIC funding source (P): the wallet whose ETH supplied "
+                  "the balance that paid this operation's gas -- B0: the wallet "
+                  "that sent ETH to the recipient EOA; B1: the wallet that funded "
+                  "the smart account / its EntryPoint deposit; B2: the sponsor "
+                  "wallet that funded the Paymaster's EntryPoint deposit. Never "
+                  "the Paymaster contract or the charged account itself. "
+                  "Replaces 1.0.0-3.0.0 'funding_wallet_id'. " + _HIDDEN_ID_DOC,
+                  nullable=True, na_allowed=True),
+        FieldSpec("immediate_gas_payer_kind", _check_immediate_payer_kind,
+                  CLASS_PUBLIC, "A0",
+                  "Which balance the execution mechanism directly charged: "
+                  "'eoa_balance', 'smart_account_entrypoint_deposit' or "
+                  "'paymaster_entrypoint_deposit'. Public context (recoverable "
+                  "from the transaction or UserOperationEvent), kept separate "
+                  "from the hidden economic funding source."),
         FieldSpec("asset_sender_id", check_opaque_id, CLASS_SECRET, "none",
                   "The account that sent the non-native asset to the stealth "
-                  "account. Distinct from funding_wallet_id by design: R1 asks "
-                  "about the gas payer, not the asset sender. " + _HIDDEN_ID_DOC,
+                  "account. Distinct from economic_funding_source_id by design "
+                  "(they may coincide in value, as in B0/B1, without being the "
+                  "same concept). " + _HIDDEN_ID_DOC,
                   nullable=True, na_allowed=True),
         FieldSpec("stealth_account_id", check_opaque_id, CLASS_SECRET, "none",
                   "The fresh stealth-controlled account (S). " + _HIDDEN_ID_DOC,
@@ -325,8 +390,9 @@ SCHEMA = StreamSchema(
                   + _HIDDEN_ID_DOC, nullable=True, na_allowed=True),
         FieldSpec("payer_to_operation_label",
                   _make_label_checker("R1"), CLASS_SECRET, "none",
-                  "R1 answer key: which funding source P is truly associated "
-                  "with operation O."),
+                  "R1 answer key: which ECONOMIC funding source P is truly "
+                  "associated with operation O (not the immediate gas payer, "
+                  "which is public context)."),
         FieldSpec("issuance_to_redemption_label",
                   _make_label_checker("R2"), CLASS_SECRET, "none",
                   "R2 answer key: which issuance event I truly supplied the "
@@ -346,6 +412,7 @@ SCHEMA = StreamSchema(
         rule_workload_matches_baseline,
         rule_record_id_matches,
         _rule_credit_fields_match_relation_r2,
+        _rule_payer_kind_matches_baseline,
         _rule_hidden_ids_distinct_from_anchors,
     ),
 )

@@ -224,14 +224,17 @@ def _ground_truth(scn: _Scenario, baseline_id: str, action_ref: str,
         subject_kind="operation",
         actor_id=scn.actor_handle,
         established_wallet_id=scn.established_handle,
-        funding_wallet_id=scn.funder_handle,
+        economic_funding_source_id=scn.funder_handle,
+        immediate_gas_payer_kind={"B0": "eoa_balance",
+                                  "B1": "smart_account_entrypoint_deposit"}.get(
+                                      baseline_id, "paymaster_entrypoint_deposit"),
         asset_sender_id=scn.sender_handle,
         stealth_account_id=scn.stealth_handle,
         credit_id=None,
         issuance_id=None,
         r1=RelationLabel("R1", "observed", subject_ref=action_ref,
                          true_value=scn.funder_handle,
-                         candidate_set_id="w1-funders"),
+                         candidate_set_id="w1-economic-funders"),
         r2=r2,
         r3=RelationLabel("R3", "observed", subject_ref=action_ref,
                          true_value=scn.actor_handle,
@@ -265,7 +268,8 @@ def _build_b0():
             scn, "B0", action_ref=action_tx,
             anchors={
                 "stealth_account_address": scn.stealth_addr,
-                "funding_address": scn.sender_addr,
+                "economic_funding_address": scn.sender_addr,
+                "immediate_gas_payer_address": scn.stealth_addr,
                 "asset_sender_address": scn.sender_addr,
                 "established_wallet_address": scn.established_addr,
                 "transaction_hash": action_tx,
@@ -361,7 +365,8 @@ def _build_b1():
             scn, "B1", action_ref=uo.userop_hash,
             anchors={
                 "stealth_account_address": scn.stealth_addr,
-                "funding_address": scn.sender_addr,
+                "economic_funding_address": scn.sender_addr,
+                "immediate_gas_payer_address": scn.stealth_addr,
                 "asset_sender_address": scn.sender_addr,
                 "established_wallet_address": scn.established_addr,
                 "transaction_hash": _h(f"tx{scn.tag}", 4),
@@ -379,6 +384,28 @@ def _build_b2(baseline_id: str):
     gts: List[GroundTruth] = []
     for scn in _scenarios(baseline_id):
         base_block = 300 + scn.idx * 10
+        # Economic funding of the immediate payer: the sponsor operator's
+        # deposit into the EntryPoint for the Paymaster (public trace, 4.0.0).
+        dep_block = base_block - 5
+        obs.append(Observation(
+            event_type="paymaster_event", outcome="success", asset_type="native",
+            scenario_id=scn.tag, observer_tier="A0", block_number=dep_block,
+            block_hash=_h("blk", dep_block), block_timestamp_utc=_ts(5 + scn.idx),
+            transaction_index=0, transaction_hash=_h(f"tx{scn.tag}", 0),
+            sender=SPONSOR_OPERATOR, target=pm_addr,
+            method_selector="0xd0e30db0", calldata_class="paymaster_deposit",
+            nonce=scn.idx, asset_amount=100_000_000_000_000_000,
+            actual_gas_used=45_000, actual_gas_cost=90_000_000_000_000,
+            effective_gas_price=2_000_000_000, success=True,
+        ))
+        obs.append(Observation(
+            event_type="entrypoint_deposit", outcome="success", asset_type="native",
+            scenario_id=scn.tag, observer_tier="A0", block_number=dep_block,
+            block_hash=_h("blk", dep_block), block_timestamp_utc=_ts(5 + scn.idx),
+            transaction_index=0, log_index=0, transaction_hash=_h(f"tx{scn.tag}", 0),
+            target=ENTRYPOINT, subject_account=pm_addr,
+            asset_amount=100_000_000_000_000_000, success=True,
+        ))
         # B2 receives the asset but no ETH: the Paymaster pays for gas.
         obs.append(_asset_arrival(scn, base_block, 10 + scn.idx, 1))
         uo = _userop(scn, with_paymaster=True, seq=1)
@@ -436,7 +463,10 @@ def _build_b2(baseline_id: str):
             scn, baseline_id, action_ref=uo.userop_hash,
             anchors={
                 "stealth_account_address": scn.stealth_addr,
-                "funding_address": pm_addr,
+                # R1 asks about the sponsor wallet that funded the Paymaster,
+                # not the public Paymaster contract (schema 4.0.0).
+                "economic_funding_address": SPONSOR_OPERATOR,
+                "immediate_gas_payer_address": pm_addr,
                 "asset_sender_address": scn.sender_addr,
                 "established_wallet_address": scn.established_addr,
                 "transaction_hash": _h(f"tx{scn.tag}", 4),

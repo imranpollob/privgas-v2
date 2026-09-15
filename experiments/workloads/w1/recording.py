@@ -7,12 +7,23 @@ private step labels, so ``public_events.jsonl`` is exactly what an archive-node
 observer could rebuild. Only the ground-truth row uses the private role file
 and the (secret) seed.
 
-Which rows a W1 run produces
-----------------------------
-per workflow transaction, in block order:
+Which rows a W1 run produces (schema 4.0.0: the COMPLETE public trace)
+--------------------------------------------------------------------
+Every mined transaction of the run -- setup, warm-up and workflow alike -- in
+block order. "Setup" is a cost-accounting boundary, not a privacy boundary:
+faucet funding, deployments and the sponsor's Paymaster deposits are public
+and can establish linkage, so they are recorded. Which rows fall inside the
+measured cost window is written privately (``w1_cost_window.json``), never in
+the public stream. Each row carries a content-derived ``trace_phase``.
 
+* contract-creation tx         -> ``eoa_transaction`` / ``contract_creation``
+  (``subject_account`` = created contract), plus a mint ``asset_transfer``
+  (phase ``infrastructure``) for the token's constructor
 * ERC20.transfer tx            -> ``asset_transfer``
-* plain ETH transfer           -> ``native_transfer``
+* plain ETH transfer           -> ``native_transfer`` (phase ``funding``)
+* Paymaster ``deposit()`` tx    -> ``paymaster_event`` / ``paymaster_deposit``
+  (sender = funding wallet, target = Paymaster), plus ``entrypoint_deposit``
+  (``subject_account`` = Paymaster)
 * ObservablePaymaster.setSponsored -> ``paymaster_event`` (``subject_account``
   = the account named in ``SponsorshipSet``)
 * EntryPoint.handleOps tx      -> ``eoa_transaction`` with calldata class
@@ -78,13 +89,12 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
     contracts = chain_dump["contracts"]
     token = contracts["W1Token"].lower()
     ep = contracts["EntryPoint"].lower()
-    pm = contracts["ObservablePaymaster"].lower()  # the only paymaster with W1 transactions
+    pm = contracts["ObservablePaymaster"].lower()
+    paymasters = {pm, contracts["SignatureVerifyingPaymaster"].lower()}
     deposit_before = chain_dump["state"].get("entrypoint_deposit_before_tx", {})
     out: List[Observation] = []
 
     for t in chain_dump["transactions"]:
-        if t["phase"] not in ("warmup", "workflow"):
-            continue
         tx, rc, blk = t["tx"], t["receipt"], t["block"]
         to = _lower(tx.get("to"))
         data = abi.data_bytes(tx["input"])
@@ -103,7 +113,31 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
                       effective_gas_price=_u(rc["effectiveGasPrice"]))
         logs = [(l, abi.decode_log(l)) for l in rc["logs"]]
 
-        if to == token and sel == abi.SELECTOR_ERC20_TRANSFER:
+        log_common = {k: v for k, v in common.items() if k not in ("outcome", "success")}
+
+        if to is None:
+            out.append(Observation(
+                event_type="eoa_transaction", asset_type="none", sender=tx["from"],
+                subject_account=rc["contractAddress"], calldata_class="contract_creation",
+                nonce=_u(tx["nonce"]), **tx_gas, **common))
+            for log, d in logs:
+                if d and d["event"] == "Transfer":
+                    out.append(Observation(
+                        event_type="asset_transfer", asset_type="erc20",
+                        trace_phase="infrastructure", log_index=_u(log["logIndex"]),
+                        sender=d["from"], target=log["address"],
+                        asset_contract=log["address"], asset_amount=d["amount"],
+                        outcome="success", success=True, **log_common))
+        elif to in paymasters and sel == abi.SELECTOR_PM_DEPOSIT:
+            out.append(Observation(
+                event_type="paymaster_event", asset_type="native", sender=tx["from"],
+                target=tx["to"], method_selector=sel, calldata_class="paymaster_deposit",
+                nonce=_u(tx["nonce"]), asset_amount=_u(tx["value"]), **tx_gas, **common))
+            for log, d in logs:
+                if d and d["event"] == "Deposited":
+                    out.append(_deposit_row(log, d, log_common,
+                                            deposit_before.get(tx["hash"], {})))
+        elif to == token and sel == abi.SELECTOR_ERC20_TRANSFER:
             _, amount = abi.decode_erc20_transfer(data)
             transfer_log = next((l for l, d in logs if d and d["event"] == "Transfer"), None)
             out.append(Observation(
@@ -134,8 +168,17 @@ def public_observations(chain_dump: Dict[str, Any]) -> List[Observation]:
             out.extend(_bundle_observations(chain_dump, t, data, logs, common,
                                             tx_gas, deposit_before.get(tx["hash"], {})))
         else:
-            raise ValueError(f"unclassifiable W1 workflow transaction {tx['hash']}")
+            raise ValueError(f"unclassifiable W1 transaction {tx['hash']}")
     return out
+
+
+def _deposit_row(log, d, log_common, deposit_before) -> Observation:
+    before = _u(deposit_before.get(d["account"], "0"))
+    return Observation(
+        event_type="entrypoint_deposit", asset_type="native", log_index=_u(log["logIndex"]),
+        target=log["address"], subject_account=d["account"],
+        asset_amount=d["total_deposit"] - before, outcome="success", success=True,
+        **log_common)
 
 
 def _bundle_observations(chain_dump, t, data, logs, common, tx_gas,
@@ -172,12 +215,7 @@ def _bundle_observations(chain_dump, t, data, logs, common, tx_gas,
             continue
         li = _u(log["logIndex"])
         if d["event"] == "Deposited":
-            before = _u(deposit_before.get(d["account"], "0"))
-            rows.append(Observation(
-                event_type="entrypoint_deposit", asset_type="native", log_index=li,
-                target=log["address"], subject_account=d["account"],
-                asset_amount=d["total_deposit"] - before,
-                outcome="success", success=True, **log_common))
+            rows.append(_deposit_row(log, d, log_common, deposit_before))
         elif d["event"] == "AccountDeployed":
             op = op_for(d["sender"])
             rows.append(Observation(
@@ -226,8 +264,8 @@ def bundler_observations(bundler_log: List[Dict[str, Any]]) -> List[BundlerObser
     order: List[Tuple[str, int]] = []
     attempt = 0
     for e in bundler_log:
-        if e["event"] == "pvg_calibration":
-            continue  # an estimation dry run, not a submission (see bundler.py)
+        if e["event"] not in ("received", "simulation", "submitted", "included"):
+            continue  # pvg_estimate / pvg_calibration: pricing, not a submission
         if e["event"] == "received":
             attempt = e["submission_attempt"]
             key = (e["userop_hash"], attempt)
@@ -269,25 +307,41 @@ def ground_truth(chain_dump: Dict[str, Any], private: Dict[str, Any], seed: int,
     action_tx = labels.get("w3_recipient_action") or labels.get("w3_bundle")
     subject = action_tx if b == "B0" else userop_hash
     sponsored = chain_dump["paymaster_used"] is not None
+    # R1 (schema 4.0.0): economic funding source <-> operation.
+    #   B0: the wallet that sent ETH to the recipient EOA   (asset sender)
+    #   B1: the wallet that funded the SimpleAccount prefund (asset sender)
+    #   B2: the sponsor wallet that funded the Paymaster's EntryPoint deposit
+    # The immediate gas payer (EOA balance / account deposit / Paymaster deposit)
+    # is public context, recorded separately and never the R1 answer.
+    funder_role = "sponsor_operator" if sponsored else "asset_sender"
     funder_handle = (opaque_handle(seed, "sponsor", "sponsor_operator") if sponsored
                      else opaque_handle(seed, "sender", "asset_sender"))
+    if sponsored:
+        payer_kind = "paymaster_entrypoint_deposit"
+        payer_address = chain_dump["contracts"][chain_dump["paymaster_used"]]
+    elif b == "B0":
+        payer_kind, payer_address = "eoa_balance", roles["recipient_account"]
+    else:
+        payer_kind, payer_address = ("smart_account_entrypoint_deposit",
+                                     roles["recipient_account"])
     actor = opaque_handle(seed, "actor", "actor")
     return GroundTruth(
         scenario_id="scn-0", subject_kind="operation",
         actor_id=actor,
         established_wallet_id=opaque_handle(seed, "wallet", "established_wallet"),
-        funding_wallet_id=funder_handle,
+        economic_funding_source_id=funder_handle,
+        immediate_gas_payer_kind=payer_kind,
         asset_sender_id=opaque_handle(seed, "sender", "asset_sender"),
         stealth_account_id=opaque_handle(seed, "stealth", f"recipient_account/{b}"),
         r1=RelationLabel("R1", "observed", subject_ref=subject, true_value=funder_handle,
-                         candidate_set_id="w1-funders"),
+                         candidate_set_id="w1-economic-funders"),
         r2=RelationLabel("R2", "not_applicable"),
         r3=RelationLabel("R3", "observed", subject_ref=subject, true_value=actor,
                          candidate_set_id="w1-actors"),
         public_anchors={
             "stealth_account_address": roles["recipient_account"],
-            "funding_address": (chain_dump["contracts"][chain_dump["paymaster_used"]]
-                                if sponsored else roles["asset_sender"]),
+            "economic_funding_address": roles[funder_role],
+            "immediate_gas_payer_address": payer_address,
             "asset_sender_address": roles["asset_sender"],
             "established_wallet_address": roles["established_wallet"],
             "transaction_hash": action_tx,
@@ -358,7 +412,7 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
         "bundler": ({"kind": "in_repo_instrumented_experimental_bundler",
                      **chain_dump["bundler"], "erc7562_enforced": False,
                      "public_mempool": False, "production_compatibility": "not established",
-                     "pvg_calibrations": chain_dump["pvg_calibrations"]}
+                     "pvg_records": chain_dump["pvg_records"]}
                     if aa else None),
         "workload": {"id": chain_dump["workload_id"],
                      "account_deployed_before_measured_action":
@@ -381,10 +435,12 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
 _COMMON_NOTE = ("MEASURED. Real signed transactions on a private local anvil devnet "
                 "(chain id 31337). Setup-phase transactions (faucet funding, all "
                 "contract deployments, both Paymaster deposits) are identical for every "
-                "baseline and workload and are not recorded as events. AA operations use "
-                "the in-repo INSTRUMENTED EXPERIMENTAL bundler (no public mempool, no "
-                "ERC-7562 enforcement, not production-compatible) with a break-even "
-                "calibrated preVerificationGas. ")
+                "baseline and workload; they are excluded from cost accounting but ARE "
+                "recorded as public events (complete public trace, schema 4.0.0). AA "
+                "operations use the in-repo INSTRUMENTED EXPERIMENTAL bundler (no public "
+                "mempool, no ERC-7562 enforcement, not production-compatible); "
+                "preVerificationGas = 21,000 + calldata gas + calibrated EntryPoint "
+                "overhead from the calibration artifact. ")
 
 NOTES = {
     ("B0", "W1-cold"): _COMMON_NOTE + "W1-cold via a sender-funded fresh EOA.",
@@ -437,5 +493,21 @@ def record_run(chain_dump: Dict[str, Any], bundler_log: List[Dict[str, Any]],
                       if r["transaction_hash"] == action_hash]
         written["ground_truth"].append(rec.record_ground_truth(
             adapter.ground_truth(ground_truth(chain_dump, private, seed, action_ids))))
+
+    # Cost window vs privacy trace: the public stream holds every row; which
+    # rows the cost analysis counts is private experiment metadata.
+    phase_by_tx = {t["tx"]["hash"]: t["phase"] for t in chain_dump["transactions"]}
+    window = {
+        "note": "SECRET experiment metadata. Maps public_events record_ids to the run "
+                "phase used by cost accounting. Not an attacker input.",
+        "run_id": run_id,
+        "rows": [{"record_id": r["record_id"],
+                  "run_phase": phase_by_tx[r["transaction_hash"]],
+                  "in_measured_cost_window": phase_by_tx[r["transaction_hash"]] == "workflow"}
+                 for r in written["public_events"]],
+    }
+    rp.private_run_dir.mkdir(parents=True, exist_ok=True)
+    (rp.private_run_dir / "w1_cost_window.json").write_text(
+        json.dumps(window, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {"experiment_id": experiment_id, "run_id": run_id, "paths": rp,
             "rows": written}

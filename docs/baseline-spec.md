@@ -1,6 +1,6 @@
 # Baseline specification
 
-Status: **B0, B1, B2-Signature and auxiliary B2-Allowlist implemented and hardened (2026-09-14, `docs/w1-baselines.md`); workloads W1-cold (primary) and W1-warm (ablation); B3 frozen specimen; B4–B6 not implemented.**
+Status: **B0, B1, B2-Signature and auxiliary B2-Allowlist implemented, hardened and R1-refined (2026-09-14, `docs/w1-baselines.md`); workloads W1-cold (primary) and W1-warm (ablation); B3 frozen specimen; B4–B6 not implemented.**
 
 `baselines/` holds reference implementations that experiments compare
 against — e.g., an unmodified/standard flow with no privacy or gas
@@ -46,6 +46,11 @@ event-structure assumptions were not and were corrected under schema 2.0.0
 `docs/research-plan.md` §5, not an implementation. The example runs under
 `experiments/recorder/examples/` are synthetic fixtures for testing the
 recorder and are not measurements — see `docs/experiment-schema.md` §10.
+
+For every baseline, R1's hidden answer is the *economic funding source* (the
+wallet that funded the gas-paying balance), while the *immediate gas payer*
+(EOA balance, SimpleAccount deposit, Paymaster deposit) is public context; see
+`docs/w1-baselines.md` §7 and `docs/experiment-schema.md` §5.0.
 
 B0/B1/B2-Allowlist/B2-Signature deviate from criterion 1 above in one respect: they run through
 `make run-matched-baselines SEED=<seed>` (which records event streams and a

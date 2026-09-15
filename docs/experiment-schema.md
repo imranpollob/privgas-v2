@@ -300,17 +300,38 @@ evidence of distinct honest participants.
 | `subject_kind` | secret | — | required | What this ground-truth row is about: one operation, one stealth account, one issuance, or one funding event. |
 | `actor_id` | secret | — | `null` / `not_applicable` ok | The hidden person/entity. Many accounts may map to one actor_id; nothing may infer otherwise. Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
 | `established_wallet_id` | secret | — | `null` / `not_applicable` ok | The actor's pre-existing, publicly known wallet (W). Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
-| `funding_wallet_id` | secret | — | `null` / `not_applicable` ok | The account that supplied gas funding / sponsorship (P). Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
-| `asset_sender_id` | secret | — | `null` / `not_applicable` ok | The account that sent the non-native asset to the stealth account. Distinct from funding_wallet_id by design: R1 asks about the gas payer, not the asset sender. Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
+| `economic_funding_source_id` | secret | — | `null` / `not_applicable` ok | The ECONOMIC funding source (P): the wallet whose ETH supplied the balance that paid this operation's gas -- B0: the wallet that sent ETH to the recipient EOA; B1: the wallet that funded the smart account / its EntryPoint deposit; B2: the sponsor wallet that funded the Paymaster's EntryPoint deposit. Never the Paymaster contract or the charged account itself. Replaces 1.0.0-3.0.0 'funding_wallet_id'. Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
+| `immediate_gas_payer_kind` | public | A0 | required | Which balance the execution mechanism directly charged: 'eoa_balance', 'smart_account_entrypoint_deposit' or 'paymaster_entrypoint_deposit'. Public context (recoverable from the transaction or UserOperationEvent), kept separate from the hidden economic funding source. |
+| `asset_sender_id` | secret | — | `null` / `not_applicable` ok | The account that sent the non-native asset to the stealth account. Distinct from economic_funding_source_id by design (they may coincide in value, as in B0/B1, without being the same concept). Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
 | `stealth_account_id` | secret | — | `null` / `not_applicable` ok | The fresh stealth-controlled account (S). Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
 | `credit_id` | secret | — | `null` / `not_applicable` ok | The hidden credit/note (C). 'not_applicable' for baselines with no credit system (B0/B1/B2). Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
 | `issuance_id` | secret | — | `null` / `not_applicable` ok | The issuance event (I) that created the credit. 'not_applicable' for baselines with no credit system. Opaque hidden handle. 'not_applicable' where the concept does not exist for this baseline; null where it exists but was not determined for this row. |
-| `payer_to_operation_label` | secret | — | required | R1 answer key: which funding source P is truly associated with operation O. |
+| `payer_to_operation_label` | secret | — | required | R1 answer key: which ECONOMIC funding source P is truly associated with operation O (not the immediate gas payer, which is public context). |
 | `issuance_to_redemption_label` | secret | — | required | R2 answer key: which issuance event I truly supplied the authorization consumed by O. |
 | `stealth_to_actor_label` | secret | — | required | R3 answer key: which actor A / established wallet W the stealth account S truly belongs to. |
 | `public_anchors` | secret | — | required | Public on-chain values that identify this row's subject in the attacker-visible streams. The bridge used by the post-freeze evaluation join, and the only place a hidden handle is tied to an address. |
 
 <!-- END GENERATED: ground_truth -->
+
+### 5.0 R1: economic funding source vs. immediate gas payer (4.0.0)
+
+R1 is **economic funding source ↔ operation** (`docs/threat-model.md`). The
+ground truth records the two concepts separately:
+
+| Concept | Field(s) | Visibility | B0 | B1 | B2-Allowlist / B2-Signature |
+|---|---|---|---|---|---|
+| immediate gas payer | `immediate_gas_payer_kind`, `public_anchors.immediate_gas_payer_address` | public context | `eoa_balance` — recipient EOA | `smart_account_entrypoint_deposit` — the SimpleAccount | `paymaster_entrypoint_deposit` — the Paymaster contract |
+| economic funding source | `economic_funding_source_id` (hidden handle), `public_anchors.economic_funding_address` | **hidden R1 answer** | wallet that sent ETH to the EOA | wallet that funded the account / its deposit | sponsor wallet that funded the Paymaster's EntryPoint deposit |
+| subject operation | `payer_to_operation_label.subject_ref` | public anchor | action tx hash | userop hash | userop hash |
+
+The R1 label's `true_value` is the economic funding source handle. The
+validator requires `immediate_gas_payer_kind` to match the baseline's
+mechanism and rejects a sponsored row whose economic funding address equals the
+Paymaster (`payer_conflation`). `funding_wallet_id` / `funding_address`
+(1.0.0–3.0.0) no longer exist; `funding_wallet_id` stays on the public-key
+denylist as an alias. The funding source is defined one hop back (the wallet
+that directly funded the charged balance); where that wallet's own ETH came
+from (e.g. a devnet faucet) is part of the public trace, not of the label.
 
 ### 5.1 Relation labels
 
@@ -359,9 +380,26 @@ without inclusion. The 1.0.0 field tables and fixtures marked the ERC-4337
 fields and mined UserOperation rows A1. The in-repo bundler used by B1/B2
 exposes no public mempool, so current measured runs contain no A1 rows at all.
 
+**The complete public trace (4.0.0).** Cost accounting and privacy observation
+have different boundaries. A transaction excluded from a measured cost window
+(faucet funding, contract deployments, a sponsor's Paymaster deposit, a warm-up
+operation) is still public and can establish linkage, so **every mined
+transaction of a run is recorded**, whatever the run calls its phase. Each row
+carries `trace_phase` — `infrastructure`, `funding`, `authorization`,
+`application` or `settlement` — which the validator requires to be a
+deterministic function of the row's own `event_type` / `calldata_class`
+(`TRACE_PHASE_RULES`): it is never a role or intent label ("funding" means
+native value moved into an account or EntryPoint deposit, by whomever). Whether
+a row lies inside the measured cost window is experiment metadata and is
+written privately (`data/private/.../w1_cost_window.json`), never in this
+stream.
+
 **Row structure of a real W1 run** (`experiments/workloads/w1/recording.py`):
-one row per workflow transaction, classified from on-chain content only
-(`asset_transfer`, `native_transfer`, `paymaster_event`); a bundle transaction
+one row per transaction, classified from on-chain content only
+(`eoa_transaction`/`contract_creation` with the created contract in
+`subject_account`, `asset_transfer`, `native_transfer`,
+`paymaster_event`/`paymaster_deposit` followed by its `entrypoint_deposit`,
+`paymaster_event`/`paymaster_policy`); a bundle transaction
 yields an `eoa_transaction` row with calldata class `entrypoint_handle_ops`
 (the bundle's own receipt gas), followed by one row per relevant log in log
 order: `account_deployment`, `entrypoint_deposit`, `asset_transfer`,
@@ -441,6 +479,7 @@ code rather than frozen into the raw record.
 | `revert_reason_class` | public | A0 | `null` ok | Coarse class of the public revert reason. A class rather than the raw string, which can carry arbitrary content. |
 | `outcome` | public | A0 | required | Overall disposition of the row's subject. |
 | `event_type` | public | A0 | required | What kind of observation this row is. |
+| `trace_phase` | public | A0 | required | Coarse content-derived classification: infrastructure (deployments), funding (native value into an account or EntryPoint deposit), authorization (paymaster policy calls), application (asset transfers), settlement (bundles and UserOperation outcomes). A deterministic function of event_type and calldata_class, never a role or intent label; whether a row lies in a measured cost window is recorded privately, not here. Added in 4.0.0 so the complete public trace -- including setup-time transactions -- is recorded. |
 | `commitment` | public | A0 | `null` ok | Publicly emitted commitment, 0x 32-byte hex. Public because it is on chain -- recording it makes no claim that it is unlinkable. |
 | `merkle_root` | public | A0 | `null` ok | Publicly visible Merkle root the operation proved against. |
 | `nullifier` | public | A0 | `null` ok | Publicly emitted nullifier. |
@@ -694,9 +733,20 @@ it as a privacy finding.
 
 ## 9. Schema versioning
 
-`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`3.0.0`**.
+`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`4.0.0`**.
 
 ### 9.0 Change log
+
+- **`4.0.0`** (2026-09-14) — final pre-Prompt-4 cleanup. MAJOR because fields
+  were renamed/split: `ground_truth.funding_wallet_id` →
+  `economic_funding_source_id`; new `ground_truth.immediate_gas_payer_kind`;
+  `public_anchors.funding_address` → `economic_funding_address` +
+  `immediate_gas_payer_address`, with rules (§5.0). `public_events` gains the
+  required, content-derived `trace_phase` and calldata class
+  `contract_creation`, so the complete public trace (including setup-time
+  transactions) is recorded (§6). Attacker-side readers now also refuse
+  `data/raw/`. 3.0.0 measured runs archived under
+  `data/private/archive/schema-3.0.0/`.
 
 - **`3.0.0`** (2026-09-14) — pre-Prompt-4 baseline hardening
   (`docs/w1-baselines.md`, `docs/decision-log.md`). MAJOR because existing
@@ -810,3 +860,6 @@ ways, all deliberate:
     production compatibility, and staking requirements were not tested. An
     independent compatible bundler is required before D2 liveness claims,
     production-compatibility claims, or replication of D1 results.
+11. **Trace phases are coarse.** `trace_phase` is derived from content only, so
+    it cannot say *why* ETH moved; distinguishing a gas-funding transfer from
+    any other native transfer is left to the analysis, as it must be.

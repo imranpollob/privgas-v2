@@ -25,7 +25,9 @@ adds on top of that, not just measure end-to-end linkability.
   ERC-4337-specific privacy effect. See `research-plan.md` §2.1.
 - **Sub-relations** (must be reported separately, never collapsed into one
   "unlinkability" number — see `research-plan.md` §6):
-  - R1: funding source / payer ↔ operation
+  - R1: economic funding source ↔ operation (refined 2026-09-14: the wallet
+    whose ETH funded the gas-paying balance, not the immediate gas payer such
+    as a public Paymaster contract — see `docs/threat-model.md`)
   - R2: credit issuance ↔ credit redemption
   - R3: stealth account ↔ established recipient wallet / actor
 - **Hypotheses**: H1-H4 in `research-plan.md` §8.

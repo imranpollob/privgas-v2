@@ -25,7 +25,8 @@ FORBIDDEN_PRIVATE_KEYS = frozenset(
         # hidden actor / account identity (docs/research-plan.md Sec. 10)
         "actor_id",
         "established_wallet_id",
-        "funding_wallet_id",
+        "economic_funding_source_id",
+        "funding_wallet_id",  # pre-4.0.0 name; still denied as an alias
         "asset_sender_id",
         "stealth_account_id",
         # credit lifecycle identity
@@ -55,7 +56,7 @@ FORBIDDEN_PRIVATE_KEYS = frozenset(
 HIDDEN_ID_FIELDS = (
     "actor_id",
     "established_wallet_id",
-    "funding_wallet_id",
+    "economic_funding_source_id",
     "asset_sender_id",
     "stealth_account_id",
     "credit_id",

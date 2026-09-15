@@ -46,6 +46,11 @@ def _guard_path(path: Path, root: Optional[Path] = None) -> Path:
             "secret ground truth; use experiments.labels in a separate "
             "process, after predictions are frozen."
         )
+    if paths_mod.is_raw_path(path, root):
+        raise PrivateDataAccessError(
+            f"{path} is under data/raw/. Raw chain and bundler dumps carry run "
+            "phases and raw bundler errors; attacker-side code reads the recorded "
+            "public streams only.")
     if path.name in (paths_mod.GROUND_TRUTH_FILE,
                      paths_mod.PRIVATE_MANIFEST_FILE):
         raise PrivateDataAccessError(

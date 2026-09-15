@@ -10,7 +10,7 @@ ENTRYPOINT_VERSION ?= unset
 
 .PHONY: help install test benchmark run-local-experiment clean env-report \
         recorder-test recorder-examples recorder-selfcheck recorder-docs \
-        baselines-build baselines-test run-matched-baselines
+        baselines-build baselines-test run-matched-baselines calibrate-pvg
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
@@ -72,6 +72,9 @@ recorder-docs: ## Regenerate the schema field tables in docs/experiment-schema.m
 # Requires Foundry (forge, anvil 1.4.1) and Python eth-account/eth-abi/eth-utils.
 baselines-build: ## Compile the B0/B1/B2 contracts (EntryPoint v0.9.0, SimpleAccount, ObservablePaymaster)
 	@cd baselines/w1_b0_b2 && forge build
+
+calibrate-pvg: baselines-build ## CALIBRATION phase: measure EntryPoint overhead O -> baselines/w1_b0_b2/calibration/pvg-overhead.json
+	@python3 -m experiments.workloads.w1.calibrate --seed $(or $(SEED1),910001) --seed $(or $(SEED2),910002)
 
 baselines-test: baselines-build ## Forge semantics tests + live anvil tests for real B0/B1/B2
 	@echo "Running B0/B1/B2 Foundry tests..."

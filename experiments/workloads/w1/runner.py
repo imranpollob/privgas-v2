@@ -24,8 +24,16 @@ callData). Excluded from the measured action cost; recorded separately.
                                                           setSponsored(account)      is off chain)
     w3    EOA: token.transfer   bundler: handleOps([op])  bundler: handleOps([op])  bundler: handleOps([op])
 
-For every AA operation the bundler first calibrates a break-even
-preVerificationGas (``pvg.py``); the wallet then signs the final op.
+For every AA operation the bundler first prices preVerificationGas; the
+wallet then signs the final op. ``pvg_mode``:
+
+* ``"calibrated_overhead"`` (default, experiment mode): PVG = 21,000 +
+  calldata gas of the exact final bundle + the EntryPoint overhead from the
+  calibration artifact (``calibration.py``); nothing is executed to price the
+  op and no ``evm_snapshot`` is taken (``chain_dump.environment.
+  evm_snapshots_taken`` is recorded and tested to be 0).
+* ``"dry_run"`` (calibration / diagnostic mode): the exact-bundle snapshot dry
+  run of ``pvg.calibrate``; used by ``python3 -m experiments.workloads.w1.calibrate``.
 
 Outputs: a role-free chain dump and bundler log under data/raw/, and role
 assignments under data/private/ (see package docstring).
@@ -59,6 +67,7 @@ from .config import (
     load_config,
 )
 from .keys import RoleKeys, faucet, role_keys
+from . import calibration
 from .pvg import CalibrationError
 from .rpc import ANVIL_HARDFORK, AnvilProcess
 from .userop import (
@@ -72,6 +81,7 @@ from .userop import (
 )
 
 BASELINES = ("B0", "B1", "B2-Allowlist", "B2-Signature")
+PVG_MODES = ("calibrated_overhead", "dry_run")
 WORKLOADS = ("W1-cold", "W1-warm")
 DUMP_VERSION = "2"
 
@@ -233,7 +243,10 @@ def _op_builder(chain: Chain, cfg: W1Config, env: Environment, keys: RoleKeys,
 
 def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                  variation: Optional[Variation] = None, build: bool = True,
-                 workload_id: str = "W1-cold") -> RunResult:
+                 workload_id: str = "W1-cold",
+                 pvg_mode: str = "calibrated_overhead") -> RunResult:
+    if pvg_mode not in PVG_MODES:
+        raise ValueError(f"pvg_mode must be one of {PVG_MODES}")
     if (baseline_id, workload_id) not in EXPERIMENT_IDS:
         raise ValueError(f"unsupported (baseline, workload) {(baseline_id, workload_id)}; "
                          f"supported: {sorted(EXPERIMENT_IDS)}")
@@ -252,6 +265,14 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
         chain = Chain(rpc=anvil.rpc, chain_id=cfg.chain_id, base_fee=cfg.base_fee,
                       max_fee=cfg.max_fee, max_priority_fee=cfg.max_priority_fee)
         chain.set_coinbase(addrs["block_producer"])
+        fingerprint = calibration.environment_fingerprint(cfg, arts, anvil.version)
+        pvg_artifact = pvg_artifact_sha = None
+        if baseline_id != "B0" and pvg_mode == "calibrated_overhead":
+            pvg_artifact = calibration.load_artifact(root)
+            pvg_artifact_sha = calibration.artifact_sha256(pvg_artifact)
+            for shape in calibration.SHAPES:  # fail before any transaction
+                if shape in pvg_artifact["entrypoint_unmeasured_overhead_by_shape"]:
+                    calibration.overhead_for(pvg_artifact, shape, fingerprint)
         env = setup_environment(chain, cfg, keys, arts)
         setup_end = chain.block_number()
 
@@ -291,11 +312,20 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
             return value
 
         def calibrated(label: str, builder, prepare) -> UserOp:
+            shape = calibration.op_shape(builder(0).call_data)
+            if pvg_mode == "calibrated_overhead":
+                est = bundler.estimate_pre_verification_gas(
+                    label=label, overhead=calibration.overhead_for(pvg_artifact, shape,
+                                                                   fingerprint),
+                    op_shape=shape, artifact_sha256=pvg_artifact_sha,
+                    build_signed_op=builder)
+                calibrations[label] = est.as_dict()
+                return builder(est.pre_verification_gas)
             try:
                 cal = bundler.calibrate_pre_verification_gas(
                     label=label, provisional=cfg.provisional_pre_verification_gas,
                     build_signed_op=builder, prepare=prepare)
-                calibrations[label] = cal.as_dict()
+                calibrations[label] = {**cal.as_dict(), "op_shape": shape}
                 return builder(cal.pre_verification_gas)
             except CalibrationError as e:
                 # Only negative variations reach this: the dry run itself fails
@@ -394,7 +424,7 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
         deposit_before_tx: Dict[str, Dict[str, str]] = {}
         for st in chain.sent:
             if st.phase == "setup":
-                continue
+                labels[st.hash] = st.label
             for log in st.receipt["logs"]:
                 d = abi.decode_log(log)
                 if d and d["event"] == "Deposited":
@@ -426,6 +456,7 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                 "coinbase": addrs["block_producer"],
                 "python_dependencies": _python_deps(),
                 "rpc_calls": anvil.rpc.calls,
+                "evm_snapshots_taken": chain.snapshots_taken,
             },
             "contracts": contracts,
             "paymaster_used": PAYMASTER_OF.get(baseline_id),
@@ -442,10 +473,14 @@ def run_baseline(baseline_id: str, seed: int, root: Optional[Path] = None,
                     root / "baselines/b3_privgas_v1/lib/account-abstraction/contracts"),
             },
             "bundler": ({"bundler_id": BUNDLER_ID, "simulation_method": SIMULATION_METHOD,
-                         "pre_verification_gas_method":
-                             cfg.raw["userop"]["pre_verification_gas_method"]}
+                         "pvg_mode": pvg_mode,
+                         "pre_verification_gas_method": (
+                             "calibrated_overhead_v1" if pvg_mode == "calibrated_overhead"
+                             else "break_even_calibration_v1"),
+                         "calibration_artifact_sha256": pvg_artifact_sha,
+                         "environment_fingerprint": fingerprint}
                         if aa else None),
-            "pvg_calibrations": calibrations,
+            "pvg_records": calibrations,
             "blocks": {"setup_end": setup_end, "warmup_end": warmup_end,
                        "workflow_end": workflow_end},
             "transactions": [st.as_dict() for st in chain.sent],

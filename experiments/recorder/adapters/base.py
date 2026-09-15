@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
 from .. import baselines
+from ..schemas.public_events import derive_trace_phase
 
 
 @dataclass
@@ -31,6 +32,9 @@ class Observation:
 
     event_type: str
     outcome: str
+    #: Content-derived public classification; None = derive the default from
+    #: event_type/calldata_class (schemas.public_events.derive_trace_phase).
+    trace_phase: Optional[str] = None
     asset_type: str = "none"
     scenario_id: Optional[str] = None
     observer_tier: str = "A0"
@@ -154,7 +158,10 @@ class GroundTruth:
     r3: RelationLabel
     actor_id: Optional[str] = None
     established_wallet_id: Optional[str] = None
-    funding_wallet_id: Optional[str] = None
+    #: R1's hidden answer: the wallet whose ETH funded the gas-paying balance.
+    economic_funding_source_id: Optional[str] = None
+    #: Public context: which balance the mechanism charged (see ground_truth).
+    immediate_gas_payer_kind: Optional[str] = None
     asset_sender_id: Optional[str] = None
     stealth_account_id: Optional[str] = None
     credit_id: Optional[str] = None
@@ -184,7 +191,8 @@ def _a(value: Optional[str]) -> Optional[str]:
 
 EMPTY_ANCHORS = {
     "stealth_account_address": None,
-    "funding_address": None,
+    "economic_funding_address": None,
+    "immediate_gas_payer_address": None,
     "asset_sender_address": None,
     "established_wallet_address": None,
     "transaction_hash": None,
@@ -258,6 +266,8 @@ class BaselineAdapter:
             "revert_reason_class": obs.revert_reason_class,
             "outcome": obs.outcome,
             "event_type": obs.event_type,
+            "trace_phase": obs.trace_phase or derive_trace_phase(
+                obs.event_type, obs.calldata_class),
             "commitment": obs.commitment,
             "merkle_root": obs.merkle_root,
             "nullifier": obs.nullifier,
@@ -311,7 +321,8 @@ class BaselineAdapter:
 
         anchors = dict(EMPTY_ANCHORS)
         anchors.update(gt.public_anchors)
-        for key in ("stealth_account_address", "funding_address",
+        for key in ("stealth_account_address", "economic_funding_address",
+                    "immediate_gas_payer_address",
                     "asset_sender_address", "established_wallet_address"):
             anchors[key] = _a(anchors[key])
 
@@ -320,7 +331,8 @@ class BaselineAdapter:
             "subject_kind": gt.subject_kind,
             "actor_id": gt.actor_id,
             "established_wallet_id": gt.established_wallet_id,
-            "funding_wallet_id": gt.funding_wallet_id,
+            "economic_funding_source_id": gt.economic_funding_source_id,
+            "immediate_gas_payer_kind": gt.immediate_gas_payer_kind,
             "asset_sender_id": gt.asset_sender_id,
             "stealth_account_id": gt.stealth_account_id,
             "credit_id": credit_id,

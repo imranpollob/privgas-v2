@@ -36,6 +36,11 @@ Rules:
 
 from __future__ import annotations
 
+#: 4.0.0 (2026-09-14): R1 refined -- ground_truth funding_wallet_id renamed
+#: economic_funding_source_id, immediate_gas_payer_kind added, public_anchors
+#: funding_address split into economic_funding_address and
+#: immediate_gas_payer_address; public_events gains trace_phase so the complete
+#: public trace (including setup-time transactions) is recorded.
 #: 3.0.0 (2026-09-14): baseline_id "B2" split into "B2-Allowlist" and
 #: "B2-Signature"; workload_id "W1" split into "W1-cold" and "W1-warm". An
 #: existing enum value changed meaning, hence MAJOR. See
@@ -45,10 +50,10 @@ from __future__ import annotations
 #: MAJOR because a bundler_private field was removed/renamed and field tier
 #: semantics changed. 1.0.0 rows (synthetic fixtures only; no measured 1.0.0
 #: data ever existed) are not readable by this code.
-SCHEMA_VERSION = "3.0.0"
+SCHEMA_VERSION = "4.0.0"
 
 #: Versions this code can read and validate. Explicit allow-list on purpose.
-SUPPORTED_SCHEMA_VERSIONS = frozenset({"3.0.0"})
+SUPPORTED_SCHEMA_VERSIONS = frozenset({"4.0.0"})
 
 STREAM_GROUND_TRUTH = "ground_truth"
 STREAM_PUBLIC_EVENTS = "public_events"

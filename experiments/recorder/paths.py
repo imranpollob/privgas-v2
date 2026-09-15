@@ -126,6 +126,17 @@ def run_paths(experiment_id: str, run_id: str,
                     experiment_id=experiment_id, run_id=run_id)
 
 
+def is_raw_path(path: Path, root: Optional[Path] = None) -> bool:
+    """True if ``path`` lies under data/raw/ (raw dumps are not attacker inputs)."""
+    root = Path(root) if root else repo_root()
+    try:
+        resolved = Path(path).resolve()
+    except OSError:  # pragma: no cover - defensive
+        return True
+    raw = (root / RAW_ROOT).resolve()
+    return resolved == raw or raw in resolved.parents
+
+
 def is_private_path(path: Path, root: Optional[Path] = None) -> bool:
     """True if ``path`` lies under data/private/. Used by the attacker-side guard."""
     root = Path(root) if root else repo_root()

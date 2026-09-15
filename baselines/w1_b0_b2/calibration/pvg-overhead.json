@@ -1,0 +1,123 @@
+{
+  "artifact_version": "1",
+  "bundle_size": 1,
+  "created_at_utc": "2026-09-15T00:18:05Z",
+  "entrypoint_unmeasured_overhead_by_shape": {
+    "empty_calldata": 13708,
+    "execute_call": 14985
+  },
+  "environment_fingerprint": {
+    "anvil_version": "anvil Version: 1.4.1-v1.4.1\nCommit SHA: cf7746048646f2ecff48246dd61e265e49ab16f0\nBuild Timestamp: 2025-10-14T13:51:29.003531000Z (1760449889)\nBuild Profile: maxperf",
+    "beneficiary_prefunded": true,
+    "bundle_size": 1,
+    "bundler_version": "privgas-minibundler-v1",
+    "chain_id": 31337,
+    "deployed_bytecode_sha256": {
+      "EntryPoint": "3f493ef5c05c0e2d651bdebbe118ac0dd37385652a729cd1383d54606a6ccdb7",
+      "ObservablePaymaster": "57e69aa98de8442b8c17636aa267013ddd73b56a8cdc04e248b00b31f37dc3e0",
+      "SignatureVerifyingPaymaster": "cc4febdddbf0df2ffb1bc72da7711ad64a3d945f999866ccf32f0ebac7bf54a5",
+      "SimpleAccount": "fd3bf39df71287b5f269f533f5bf37938134cd3d8257d10d4f60d066698aba4f",
+      "SimpleAccountFactory": "973a3066a222f2a02807e7649fb79517253d9c7c8439cb30bd27b40bfad96428"
+    },
+    "entrypoint_source_commit": "b36a1ed52ae00da6f8a4c8d50181e2877e4fa410",
+    "hardfork": "prague"
+  },
+  "matched_config_sha256": "3b0e4171a6aedaf84af1230a3133342f0009f66378c71a3befae5ca03eb4f6a0",
+  "method": "break_even_calibration_v1 (exact-bundle evm_snapshot dry run)",
+  "notes": "O = bundle receipt gasUsed - (UserOperationEvent.actualGasUsed - PVG) - 21,000 - EIP-2028 calldata gas of the exact bundle. Valid only for the fingerprinted environment; experiment runs refuse to use it otherwise.",
+  "provisional_pre_verification_gas": 50000,
+  "regenerate_with": "python3 -m experiments.workloads.w1.calibrate --seed <s> ...",
+  "samples": [
+    {
+      "dry_run_bundle_gas_used": 288783,
+      "dry_run_calldata_bytes": 996,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "cbc5a1e8d3b1cde261c3342143c2225f1a64736d5ee58e55a4dc9a9c0f06da17",
+      "variant": "B1 W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 257613,
+      "dry_run_calldata_bytes": 740,
+      "entrypoint_unmeasured_overhead": 13708,
+      "label": "warmup_deploy_bundle",
+      "op_shape": "empty_calldata",
+      "seed_commitment_sha256": "cbc5a1e8d3b1cde261c3342143c2225f1a64736d5ee58e55a4dc9a9c0f06da17",
+      "variant": "B1 W1-warm"
+    },
+    {
+      "dry_run_bundle_gas_used": 114954,
+      "dry_run_calldata_bytes": 900,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "cbc5a1e8d3b1cde261c3342143c2225f1a64736d5ee58e55a4dc9a9c0f06da17",
+      "variant": "B1 W1-warm"
+    },
+    {
+      "dry_run_bundle_gas_used": 271073,
+      "dry_run_calldata_bytes": 1060,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "cbc5a1e8d3b1cde261c3342143c2225f1a64736d5ee58e55a4dc9a9c0f06da17",
+      "variant": "B2-Allowlist W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 276632,
+      "dry_run_calldata_bytes": 1188,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "cbc5a1e8d3b1cde261c3342143c2225f1a64736d5ee58e55a4dc9a9c0f06da17",
+      "variant": "B2-Signature W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 288819,
+      "dry_run_calldata_bytes": 996,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
+      "variant": "B1 W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 257625,
+      "dry_run_calldata_bytes": 740,
+      "entrypoint_unmeasured_overhead": 13708,
+      "label": "warmup_deploy_bundle",
+      "op_shape": "empty_calldata",
+      "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
+      "variant": "B1 W1-warm"
+    },
+    {
+      "dry_run_bundle_gas_used": 114990,
+      "dry_run_calldata_bytes": 900,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
+      "variant": "B1 W1-warm"
+    },
+    {
+      "dry_run_bundle_gas_used": 271109,
+      "dry_run_calldata_bytes": 1060,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
+      "variant": "B2-Allowlist W1-cold"
+    },
+    {
+      "dry_run_bundle_gas_used": 276668,
+      "dry_run_calldata_bytes": 1188,
+      "entrypoint_unmeasured_overhead": 14985,
+      "label": "w3_bundle",
+      "op_shape": "execute_call",
+      "seed_commitment_sha256": "ac2ea84990ac1e71b53b1305b70696b4dd77956cd35b7480c52268495523d966",
+      "variant": "B2-Signature W1-cold"
+    }
+  ],
+  "seed_count": 2
+}

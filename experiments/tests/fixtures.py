@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from experiments.recorder import baselines
 from experiments.recorder.schemas.common import build_record_id
+from experiments.recorder.schemas.public_events import derive_trace_phase
 from experiments.recorder.version import SCHEMA_VERSION
 
 CLEAN_REVISION = {
@@ -33,6 +35,7 @@ RUN_ID = "synthetic-20260301T120000Z-t"
 EXPERIMENT_ID = "tests/recorder-fixture"
 
 ADDRESS = "0x57ea1a0000000000000000000000000000000001"
+FUNDER = "0xf0f0000000000000000000000000000000000001"
 PAYMASTER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ENTRYPOINT = "0x0000000071727de22e5e9d8baf0edac6f37da032"
 TOKEN = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
@@ -102,6 +105,7 @@ def public_event(baseline_id: str = "B0", seq: int = 0, **overrides
         "revert_reason_class": None,
         "outcome": "success",
         "event_type": "asset_transfer",
+        "trace_phase": "application",
         "commitment": None,
         "merkle_root": None,
         "nullifier": None,
@@ -109,6 +113,8 @@ def public_event(baseline_id: str = "B0", seq: int = 0, **overrides
         "proof_metadata": None,
     })
     row.update(overrides)
+    if "trace_phase" not in overrides:
+        row["trace_phase"] = derive_trace_phase(row["event_type"], row["calldata_class"])
     return row
 
 
@@ -145,6 +151,8 @@ def erc4337_public_event(baseline_id: str = "B1", seq: int = 0, **overrides
             "paymaster_post_op_gas_limit": "40000",
         })
     row.update(overrides)
+    if "trace_phase" not in overrides:
+        row["trace_phase"] = derive_trace_phase(row["event_type"], row["calldata_class"])
     return row
 
 
@@ -186,6 +194,13 @@ def label(relation: str, status: str = "observed", subject_ref: str = HASH_B,
             "true_value": true_value, "candidate_set_id": candidate_set_id}
 
 
+def _payer_kind(baseline_id: str) -> str:
+    caps = baselines.get(baseline_id)
+    if caps.uses_paymaster:
+        return "paymaster_entrypoint_deposit"
+    return "smart_account_entrypoint_deposit" if caps.uses_erc4337 else "eoa_balance"
+
+
 def ground_truth(baseline_id: str = "B0", seq: int = 0, **overrides
                  ) -> Dict[str, Any]:
     row = envelope("ground_truth", seq, baseline_id)
@@ -195,7 +210,8 @@ def ground_truth(baseline_id: str = "B0", seq: int = 0, **overrides
         "subject_kind": "operation",
         "actor_id": "actor_7c1e",
         "established_wallet_id": "wallet_7c1e_main",
-        "funding_wallet_id": "funder_7c1e",
+        "economic_funding_source_id": "funder_7c1e",
+        "immediate_gas_payer_kind": _payer_kind(baseline_id),
         "asset_sender_id": "sender_7c1e",
         "stealth_account_id": "stealth_a1",
         "credit_id": "credit_0001" if has_credit else "not_applicable",
@@ -208,7 +224,9 @@ def ground_truth(baseline_id: str = "B0", seq: int = 0, **overrides
         "stealth_to_actor_label": label("R3"),
         "public_anchors": {
             "stealth_account_address": ADDRESS,
-            "funding_address": ADDRESS,
+            "economic_funding_address": FUNDER,
+            "immediate_gas_payer_address": (PAYMASTER if baselines.get(baseline_id).uses_paymaster
+                                            else ADDRESS),
             "asset_sender_address": ADDRESS,
             "established_wallet_address": PAYMASTER,
             "transaction_hash": HASH_A,

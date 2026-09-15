@@ -16,7 +16,8 @@ import unittest
 from pathlib import Path
 
 from experiments.recorder.provenance import environment_report, software_revision
-from experiments.workloads.w1 import abi, compare, pvg
+from experiments.recorder.version import SCHEMA_VERSION
+from experiments.workloads.w1 import abi, calibration, compare, pvg
 from experiments.workloads.w1.accounting import (
     SUBSIDY_TOLERANCE_GAS,
     AccountingError,
@@ -24,6 +25,7 @@ from experiments.workloads.w1.accounting import (
 )
 from experiments.workloads.w1.artifacts import forge_build
 from experiments.workloads.w1.config import EXPERIMENT_IDS, RUN_ID_SUFFIX, load_config
+from experiments.workloads.w1.calibrate import run_calibration
 from experiments.workloads.w1.recording import record_run
 from experiments.workloads.w1.runner import Variation, run_baseline
 from experiments.workloads.w1.userop import unpack
@@ -84,7 +86,7 @@ class TestB0(LiveW1TestCase):
         r = self.run_of(B0)
         self.assertIsNone(r.failure)
         self.assertTrue(all(c["ok"] for c in self.costs(B0)["checks"]))
-        self.assertEqual([t["label"] for t in txs(r)],
+        self.assertEqual([r.private["tx_labels"][t["tx"]["hash"]] for t in txs(r)],
                          ["w1_asset_delivery", "w2_eth_allowance", "w3_recipient_action"])
         self.assertEqual(r.chain_dump["userops"], [])
         self.assertEqual(r.bundler_log, [])
@@ -141,7 +143,7 @@ class TestB1Warm(LiveW1TestCase):
         rec = r.private["roles"]["recipient_account"]
         self.assertEqual(state(r, "code_size", rec, "setup"), 0)
         self.assertGreater(state(r, "code_size", rec, "start"), 0)
-        self.assertEqual([t["label"] for t in txs(r, "warmup")],
+        self.assertEqual([r.private["tx_labels"][t["tx"]["hash"]] for t in txs(r, "warmup")],
                          ["warmup_eth_allowance", "warmup_deploy_bundle"])
         self.assertEqual(bundle_op(r)["init_code_length"], 0)
         self.assertEqual(bundle_op(r, "warmup_deploy_bundle")["call_data"], b"")
@@ -172,7 +174,7 @@ class TestB2Allowlist(LiveW1TestCase):
         for which in ("start", "end"):
             self.assertEqual(state(r, "eth_balance", rec, which), "0")
             self.assertEqual(state(r, "entrypoint_deposit", rec, which), "0")
-        self.assertEqual([t["label"] for t in txs(r)],
+        self.assertEqual([r.private["tx_labels"][t["tx"]["hash"]] for t in txs(r)],
                          ["w1_asset_delivery", "w2_sponsor_allowlist", "w3_bundle"])
         self.assertGreater(int(c["summary"]["sponsor_authorization_cost"]), 0)
         pm = r.chain_dump["contracts"]["ObservablePaymaster"]
@@ -192,7 +194,7 @@ class TestB2Signature(LiveW1TestCase):
         r = self.run_of(B2S)
         self.assertIsNone(r.failure)
         c = self.costs(B2S)
-        self.assertEqual([t["label"] for t in txs(r)], ["w1_asset_delivery", "w3_bundle"])
+        self.assertEqual([r.private["tx_labels"][t["tx"]["hash"]] for t in txs(r)], ["w1_asset_delivery", "w3_bundle"])
         operator = r.private["roles"]["sponsor_operator"]
         signer = r.private["roles"]["sponsor_signer"]
         for t in txs(r):
@@ -233,14 +235,13 @@ class TestPreVerificationGasCalibration(LiveW1TestCase):
         for v in AA:
             with self.subTest(variant=v):
                 r = self.run_of(v)
-                cal = r.chain_dump["pvg_calibrations"]["w3_bundle"]
+                cal = r.chain_dump["pvg_records"]["w3_bundle"]
                 mined = abi.data_bytes(by_label(r, "w3_bundle")["tx"]["input"])
                 self.assertEqual(cal["final_calldata_gas"], pvg.calldata_gas(mined))
                 self.assertEqual(bundle_op(r)["pre_verification_gas"], cal["pre_verification_gas"])
                 self.assertEqual(cal["pre_verification_gas"],
                                  pvg.TX_BASE_GAS + cal["final_calldata_gas"]
                                  + cal["entrypoint_unmeasured_overhead"] + cal["surplus_gas"])
-                self.assertFalse(cal["eip7623_floor_binding"])
 
     def test_subsidy_assertion_detects_an_underpaying_bundle(self):
         r = self.run_of(B2S)
@@ -272,6 +273,179 @@ class TestPreVerificationGasCalibration(LiveW1TestCase):
             config_mod.W1Config.call_gas_limit = original
 
 
+class TestPreVerificationGasExperimentMode(LiveW1TestCase):
+    """Experiment runs price PVG from the calibration artifact; they never
+    execute (snapshot/revert) their own operation to rediscover O."""
+
+    def test_no_exact_operation_dry_run_in_experiment_runs(self):
+        artifact = calibration.load_artifact(REPO_ROOT)
+        sha = calibration.artifact_sha256(artifact)
+        for v, r in self.runs.items():
+            with self.subTest(variant=v):
+                self.assertEqual(r.chain_dump["environment"]["evm_snapshots_taken"], 0)
+                events = {e["event"] for e in r.bundler_log}
+                self.assertNotIn("pvg_calibration", events)
+                if v[0] == "B0":
+                    continue
+                self.assertIn("pvg_estimate", events)
+                self.assertEqual(r.chain_dump["bundler"]["pvg_mode"], "calibrated_overhead")
+                for label, rec in r.chain_dump["pvg_records"].items():
+                    self.assertEqual(rec["method"], "calibrated_overhead_v1")
+                    self.assertEqual(rec["calibration_artifact_sha256"], sha)
+                    self.assertEqual(
+                        rec["entrypoint_unmeasured_overhead"],
+                        artifact["entrypoint_unmeasured_overhead_by_shape"][rec["op_shape"]])
+
+    def test_dry_run_mode_remains_available_and_agrees(self):
+        diag = run_baseline("B2-Signature", SEED, REPO_ROOT, build=False, pvg_mode="dry_run")
+        self.assertGreater(diag.chain_dump["environment"]["evm_snapshots_taken"], 0)
+        measured = diag.chain_dump["pvg_records"]["w3_bundle"]["pre_verification_gas"]
+        estimated = self.run_of(B2S).chain_dump["pvg_records"]["w3_bundle"]["pre_verification_gas"]
+        self.assertLessEqual(abs(measured - estimated), 24)
+
+    def test_changed_environment_requires_recalibration(self):
+        original = calibration.environment_fingerprint
+
+        def changed(*a, **k):
+            return {**original(*a, **k), "bundle_size": 2}
+
+        try:
+            calibration.environment_fingerprint = changed
+            with self.assertRaises(calibration.RecalibrationRequired) as ctx:
+                run_baseline("B1", SEED, REPO_ROOT, build=False)
+            self.assertIn("bundle_size", str(ctx.exception))
+        finally:
+            calibration.environment_fingerprint = original
+
+    def test_calibration_is_reproducible_with_a_fresh_seed(self):
+        fresh = run_calibration([910777], REPO_ROOT, build=False)
+        artifact = calibration.load_artifact(REPO_ROOT)
+        self.assertEqual(fresh["entrypoint_unmeasured_overhead_by_shape"],
+                         artifact["entrypoint_unmeasured_overhead_by_shape"])
+        self.assertEqual(fresh["environment_fingerprint"], artifact["environment_fingerprint"])
+
+
+class TestR1PublicTrace(LiveW1TestCase):
+    """The recorded public trace contains the funding evidence that exists.
+    Uses private anchors only to locate it -- this is not inference."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.env = environment_report(REPO_ROOT)
+        cls.tmp = TestRecording._sandbox()
+        cls.traces = {}
+        for v in EXPERIMENT_IDS:
+            r = cls.runs[v]
+            out = record_run(r.chain_dump, r.bundler_log, r.private, SEED,
+                             f"20260914T000000Z-{RUN_ID_SUFFIX[v]}", cls.tmp,
+                             clock=lambda: "2026-09-14T00:00:00Z", env_report=cls.env)
+            cls.traces[v] = (out["rows"]["public_events"], out["rows"]["ground_truth"][0])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @staticmethod
+    def find(rows, **want):
+        return [r for r in rows if all(r[k] == v for k, v in want.items())]
+
+    def test_every_mined_transaction_is_in_the_public_trace(self):
+        for v in EXPERIMENT_IDS:
+            with self.subTest(variant=v):
+                rows, _ = self.traces[v]
+                hashes = {t["tx"]["hash"] for t in self.run_of(v).chain_dump["transactions"]}
+                self.assertEqual({r["transaction_hash"] for r in rows}, hashes)
+                phases = {r["trace_phase"] for r in rows}
+                self.assertTrue({"infrastructure", "funding", "application"} <= phases)
+
+    def test_ground_truth_separates_economic_funder_immediate_payer_and_operation(self):
+        expected = {B0: "eoa_balance", B1C: "smart_account_entrypoint_deposit",
+                    B1W: "smart_account_entrypoint_deposit",
+                    B2A: "paymaster_entrypoint_deposit", B2S: "paymaster_entrypoint_deposit"}
+        for v in EXPERIMENT_IDS:
+            with self.subTest(variant=v):
+                rows, gt = self.traces[v]
+                a = gt["public_anchors"]
+                self.assertEqual(gt["immediate_gas_payer_kind"], expected[v])
+                self.assertNotEqual(a["economic_funding_address"], a["immediate_gas_payer_address"])
+                self.assertEqual(gt["payer_to_operation_label"]["true_value"],
+                                 gt["economic_funding_source_id"])
+                op_ref = gt["payer_to_operation_label"]["subject_ref"]
+                self.assertTrue(self.find(rows, transaction_hash=op_ref) if v == B0
+                                else self.find(rows, userop_hash=op_ref))
+                if v[0].startswith("B2"):
+                    pm = self.run_of(v).chain_dump["contracts"][
+                        self.run_of(v).chain_dump["paymaster_used"]].lower()
+                    self.assertEqual(a["immediate_gas_payer_address"], pm)
+                    self.assertNotEqual(a["economic_funding_address"], pm)
+
+    def _sponsor_funding_evidence(self, v):
+        rows, gt = self.traces[v]
+        a = gt["public_anchors"]
+        pm = a["immediate_gas_payer_address"]
+        deposit_tx = self.find(rows, event_type="paymaster_event", calldata_class="paymaster_deposit",
+                               sender=a["economic_funding_address"], target=pm)
+        self.assertEqual(len(deposit_tx), 1, "sponsor wallet -> Paymaster deposit()")
+        self.assertTrue(self.find(rows, event_type="entrypoint_deposit", subject_account=pm,
+                                  transaction_hash=deposit_tx[0]["transaction_hash"]))
+        uo = self.find(rows, event_type="user_operation_event", paymaster=pm)
+        self.assertEqual(len(uo), 1, "sponsored UserOperation names the Paymaster")
+        self.assertEqual(uo[0]["sender"], a["stealth_account_address"])
+        return rows, a, uo[0]
+
+    def test_b0_trace_contains_the_eth_funding_edge(self):
+        rows, gt = self.traces[B0]
+        a = gt["public_anchors"]
+        edge = self.find(rows, event_type="native_transfer", sender=a["economic_funding_address"],
+                         target=a["immediate_gas_payer_address"])
+        self.assertEqual(len(edge), 1)
+        action = self.find(rows, transaction_hash=a["transaction_hash"])
+        self.assertLess(edge[0]["seq"], action[0]["seq"])
+
+    def test_b1_trace_contains_the_account_funding_and_deposit_path(self):
+        for v in (B1C, B1W):
+            with self.subTest(variant=v):
+                rows, gt = self.traces[v]
+                a = gt["public_anchors"]
+                account = a["immediate_gas_payer_address"]
+                self.assertEqual(account, a["stealth_account_address"])
+                self.assertTrue(self.find(rows, event_type="native_transfer",
+                                          sender=a["economic_funding_address"], target=account))
+                self.assertTrue(self.find(rows, event_type="entrypoint_deposit",
+                                          subject_account=account))
+                self.assertTrue(self.find(rows, event_type="user_operation_event",
+                                          sender=account, paymaster=None))
+
+    def test_b2_allowlist_trace_contains_funding_authorization_and_operation(self):
+        rows, a, uo = self._sponsor_funding_evidence(B2A)
+        auth = self.find(rows, event_type="paymaster_event", calldata_class="paymaster_policy",
+                         subject_account=a["stealth_account_address"])
+        self.assertEqual(len(auth), 1, "setSponsored(account, true)")
+        self.assertEqual(auth[0]["trace_phase"], "authorization")
+        self.assertEqual(auth[0]["sender"], a["economic_funding_address"])
+        self.assertLess(auth[0]["seq"], uo["seq"])
+
+    def test_b2_signature_trace_contains_funding_and_operation_but_no_authorization_tx(self):
+        rows, a, uo = self._sponsor_funding_evidence(B2S)
+        self.assertEqual(self.find(rows, calldata_class="paymaster_policy"), [])
+        self.assertEqual(self.find(rows, trace_phase="authorization"), [])
+
+    def test_cost_window_is_private_and_excludes_setup(self):
+        for v in (B0, B2S):
+            with self.subTest(variant=v):
+                rp = paths_run(self.tmp, v)
+                window = json.loads((rp.private_run_dir / "w1_cost_window.json").read_text())
+                in_window = [x for x in window["rows"] if x["in_measured_cost_window"]]
+                self.assertLess(len(in_window), len(window["rows"]))
+                self.assertNotIn("in_measured_cost_window", rp.public_events_path.read_text())
+
+
+def paths_run(root, v):
+    from experiments.recorder import paths as paths_mod
+    return paths_mod.run_paths(EXPERIMENT_IDS[v], f"20260914T000000Z-{RUN_ID_SUFFIX[v]}", root)
+
+
 class TestFairness(LiveW1TestCase):
     def test_all_fairness_checks_pass(self):
         runs = {v: {"chain_dump": r.chain_dump, "private": r.private}
@@ -290,7 +464,7 @@ class TestFairness(LiveW1TestCase):
     def test_same_fee_policy_on_every_workflow_transaction(self):
         for v, r in self.runs.items():
             for t in txs(r) + txs(r, "warmup"):
-                with self.subTest(variant=v, tx=t["label"]):
+                with self.subTest(variant=v, tx=t["tx"]["hash"]):
                     self.assertEqual(int(t["receipt"]["effectiveGasPrice"], 16), 2 * 10**9)
                     self.assertEqual(int(t["block"]["baseFeePerGas"], 16), 10**9)
 
@@ -303,8 +477,7 @@ class TestFairness(LiveW1TestCase):
 
         self.assertEqual(key(first), key(again))
         self.assertEqual(first.chain_dump["userops"], again.chain_dump["userops"])
-        self.assertEqual(first.chain_dump["pvg_calibrations"],
-                         again.chain_dump["pvg_calibrations"])
+        self.assertEqual(first.chain_dump["pvg_records"], again.chain_dump["pvg_records"])
 
 
 class TestRecording(LiveW1TestCase):
@@ -346,7 +519,7 @@ class TestRecording(LiveW1TestCase):
                 for row in self.rows(rp.public_events_path):
                     self.assertEqual(row["data_origin"], "measured")
                     self.assertEqual((row["baseline_id"], row["workload_id"]), v)
-                    self.assertEqual(row["schema_version"], "3.0.0")
+                    self.assertEqual(row["schema_version"], SCHEMA_VERSION)
 
     def test_b0_record_has_no_userop_paymaster_or_bundler(self):
         rp = self.record(self.run_of(B0), "b0cold")["paths"]
@@ -404,8 +577,13 @@ class TestRecording(LiveW1TestCase):
         r = run_baseline("B2-Signature", SEED, REPO_ROOT, build=False,
                          variation=Variation(wrong_sponsor_signature=True))
         rp = self.record(r, "b2sigbad")["paths"]
-        self.assertEqual([p["event_type"] for p in self.rows(rp.public_events_path)],
-                         ["asset_transfer"])
+        public = self.rows(rp.public_events_path)
+        # The full public trace (setup, asset delivery) is present, but nothing
+        # about the privately rejected operation is.
+        self.assertTrue([p for p in public if p["event_type"] == "asset_transfer"])
+        self.assertEqual([p for p in public if p["event_type"] in
+                          ("user_operation_event", "account_deployment")
+                          or p["calldata_class"] == "entrypoint_handle_ops"], [])
         (row,) = self.rows(rp.bundler_private_path)
         self.assertEqual(row["rejection_category"], "paymaster_validation_revert")
 

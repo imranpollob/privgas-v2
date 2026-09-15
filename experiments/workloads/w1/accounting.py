@@ -167,7 +167,7 @@ def reconcile(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str, 
         e = _userop_event(bundle["_raw"])
         op_entry = next(u for u in chain_dump["userops"] if u["label"] == label)
         price = _userop_gas_price(op_entry["packed"], bundle["base_fee_per_gas"])
-        cal = chain_dump["pvg_calibrations"][label]
+        cal = chain_dump["pvg_records"][label]
         return {
             "userop_hash": e["userop_hash"], "success": e["success"],
             "paymaster": e["paymaster"], "actual_gas_used": e["actual_gas_used"],
@@ -190,8 +190,9 @@ def reconcile(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str, 
               userop["actual_gas_used"] * userop["userop_gas_price"], userop["actual_gas_cost"])
         check("userop hash in event == hash signed and submitted",
               int(userop["_expected_hash"], 16), int(userop["userop_hash"], 16))
-        check("preVerificationGas was calibrated (not the provisional value)", 1,
-              int(userop["pvg_calibration"].get("method") == "break_even_calibration_v1"))
+        check("preVerificationGas priced by a calibrated method (not the provisional value)",
+              1, int(userop["pvg_calibration"].get("method") in (
+                  "calibrated_overhead_v1", "break_even_calibration_v1")))
         check(f"no systematic bundler subsidy: bundler net gas >= -{SUBSIDY_TOLERANCE_GAS}",
               -SUBSIDY_TOLERANCE_GAS, userop["bundler_net_gas"], ">=")
         check("beneficiary delta == UserOperation actualGasCost", userop["actual_gas_cost"],

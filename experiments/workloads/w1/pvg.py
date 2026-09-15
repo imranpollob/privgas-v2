@@ -1,4 +1,19 @@
-"""Break-even preVerificationGas calibration for the in-repo bundler.
+"""preVerificationGas for the in-repo bundler: calibration and per-sample estimate.
+
+Two modes, deliberately separated (docs/w1-baselines.md Sec. 5):
+
+* ``calibrate`` (CALIBRATION / diagnostic mode, method
+  ``break_even_calibration_v1``) dry-runs the exact encoded bundle inside a
+  reverted snapshot to MEASURE the EntryPoint's unmeasured overhead O. It is
+  run by ``python3 -m experiments.workloads.w1.calibrate``, which writes the
+  reproducible calibration artifact.
+* ``estimate`` (EXPERIMENT mode, method ``calibrated_overhead_v1``) never
+  executes the operation: PVG = 21,000 + calldataGas(exact final handleOps
+  calldata) + O, with O read from the calibration artifact for the pinned
+  environment (``calibration.py``), iterated to a covering fixed point
+  because PVG changes the hash, the signatures and the calldata.
+
+The rest of this docstring describes the calibration measurement.
 
 Why: EntryPoint v0.9.0 reimburses the beneficiary ``actualGasUsed * price``,
 where ``actualGasUsed = preVerificationGas + gas the EntryPoint measures itself
@@ -90,6 +105,55 @@ class PvgCalibration:
         return asdict(self)
 
 
+ESTIMATE_METHOD = "calibrated_overhead_v1"
+
+
+@dataclass
+class PvgEstimate:
+    method: str
+    op_shape: str
+    entrypoint_unmeasured_overhead: int
+    calibration_artifact_sha256: str
+    tx_base_gas: int
+    pre_verification_gas: int
+    final_calldata_bytes: int
+    final_calldata_gas: int
+    surplus_gas: int
+    iterations: List[List[int]] = field(default_factory=list)
+
+    def as_dict(self):
+        return asdict(self)
+
+
+def _solve(build_signed_op: Callable[[int], UserOp], beneficiary: str, overhead: int,
+           start: int) -> tuple:
+    """Smallest covering fixed point of PVG = 21,000 + calldataGas(bundle(PVG)) + O."""
+    pvg = start
+    iterations: List[List[int]] = []
+    for _ in range(MAX_ITERATIONS):
+        data = handle_ops_calldata([build_signed_op(pvg)], beneficiary)
+        required = TX_BASE_GAS + calldata_gas(data) + overhead
+        iterations.append([pvg, required])
+        if required <= pvg:
+            return pvg, data, required, iterations
+        pvg = required
+    raise CalibrationError(f"preVerificationGas did not converge: {iterations}")
+
+
+def estimate(*, beneficiary: str, overhead: int, op_shape: str, artifact_sha256: str,
+             build_signed_op: Callable[[int], UserOp]) -> PvgEstimate:
+    """Experiment-mode PVG: no execution, no snapshot, calibrated O only."""
+    op0 = build_signed_op(0)
+    start = TX_BASE_GAS + calldata_gas(handle_ops_calldata([op0], beneficiary)) + overhead
+    pvg, data, required, iterations = _solve(build_signed_op, beneficiary, overhead, start)
+    return PvgEstimate(
+        method=ESTIMATE_METHOD, op_shape=op_shape, entrypoint_unmeasured_overhead=overhead,
+        calibration_artifact_sha256=artifact_sha256, tx_base_gas=TX_BASE_GAS,
+        pre_verification_gas=pvg, final_calldata_bytes=len(data),
+        final_calldata_gas=calldata_gas(data), surplus_gas=pvg - required,
+        iterations=iterations)
+
+
 def calibrate(chain: Chain, *, entrypoint: str, bundler_account, beneficiary: str,
               bundle_gas_limit: int, provisional: int,
               build_signed_op: Callable[[int], UserOp],
@@ -123,17 +187,7 @@ def calibrate(chain: Chain, *, entrypoint: str, bundler_account, beneficiary: st
     if floor_binding:
         raise CalibrationError("EIP-7623 calldata floor is binding; decomposition invalid")
 
-    pvg = unmeasured
-    iterations: List[List[int]] = []
-    for _ in range(MAX_ITERATIONS):
-        data = handle_ops_calldata([build_signed_op(pvg)], beneficiary)
-        required = TX_BASE_GAS + calldata_gas(data) + overhead
-        iterations.append([pvg, required])
-        if required <= pvg:
-            break
-        pvg = required
-    else:
-        raise CalibrationError(f"preVerificationGas did not converge: {iterations}")
+    pvg, _, _, iterations = _solve(build_signed_op, beneficiary, overhead, unmeasured)
 
     final_data = handle_ops_calldata([build_signed_op(pvg)], beneficiary)
     final_required = TX_BASE_GAS + calldata_gas(final_data) + overhead

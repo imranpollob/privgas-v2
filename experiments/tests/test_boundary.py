@@ -94,6 +94,21 @@ class TestFeatureSideCannotReachLabels(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertIn("OK", r.stdout)
 
+    def test_attacker_readers_refuse_a_path_under_data_raw(self):
+        r = _run("""
+            from pathlib import Path
+            import experiments.attacker_view as av
+            target = Path.cwd() / "data" / "raw" / "anything" / "chain_dump.json"
+            try:
+                av.load_public_events(target)
+            except av.PrivateDataAccessError as exc:
+                print("BLOCKED:", exc)
+            else:
+                raise SystemExit("a data/raw path was readable")
+        """)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("BLOCKED:", r.stdout)
+
     def test_attacker_readers_refuse_a_path_under_data_private(self):
         """Constructing the path by hand does not get around the guard."""
         r = _run("""

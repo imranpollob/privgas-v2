@@ -27,6 +27,20 @@ code, and data schemas:
 
 - **R1 — Payer-to-operation linkage**: can the observer infer which
   funding source P is associated with operation O?
+  **Refined 2026-09-14** (`docs/decision-log.md`): R1 is **economic funding
+  source ↔ operation**. Two concepts are kept distinct and recorded separately:
+  - *immediate gas payer* — the balance the execution mechanism directly
+    charges: the sender EOA's balance (B0), the SimpleAccount's EntryPoint
+    deposit (B1), or the Paymaster's EntryPoint deposit (B2). This is normally
+    **public context** (it is in the transaction or `UserOperationEvent`);
+  - *economic funding source* — the wallet whose ETH supplied that balance:
+    the wallet that sent ETH to the B0 recipient, the wallet that funded the
+    B1 account / its deposit, the sponsor wallet that funded the B2
+    Paymaster's deposit. **This is the hidden R1 answer.**
+
+  "Which Paymaster contract paid" is intentionally public and usually trivial;
+  it is never the R1 question. An EOA, a smart account, a Paymaster contract
+  and an economic actor are never collapsed into one generic "payer".
 - **R2 — Issuance-to-redemption linkage**: can the observer infer which
   issuance event I supplied the private authorization consumed by O?
 - **R3 — Account-to-recipient linkage**: can the observer associate

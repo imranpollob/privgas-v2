@@ -1,7 +1,7 @@
 # W1 matched baselines: B0, B1, B2-Allowlist, B2-Signature
 
 Status: **implemented, hardened and measured on a local devnet (2026-09-14,
-pre-Prompt-4).** Schema 3.0.0. No privacy result is claimed anywhere in this
+final pre-Prompt-4 cleanup).** Schema 4.0.0. No privacy result is claimed anywhere in this
 document; it defines the baselines, their costs and their remaining
 differences.
 
@@ -9,6 +9,7 @@ differences.
 - Live runner, bundler, calibration, accounting, recording, comparison:
   `experiments/workloads/w1/`
 - Matched parameters (single source of truth): `baselines/w1_b0_b2/w1-config.json`
+- Calibrate (environment-level, once): `make calibrate-pvg`
 - Run: `make run-matched-baselines SEED=<seed>`; test: `make baselines-test`
 
 ## 1. Baselines and workloads
@@ -55,7 +56,7 @@ runs) and by the Foundry/live tests:
 | Fee environment | base fee pinned to 1 gwei every block; priority 1 gwei; max fee 2 gwei → effective 2 gwei for every transaction and UserOperation |
 | Account gas limits | verification 300,000; call 60,000 (no unused-gas penalty — tested) |
 | Paymaster limits (both B2) | verification 60,000; postOp 0 |
-| preVerificationGas | **not fixed**: calibrated per operation by one method (§5) |
+| preVerificationGas | **not fixed**: one method for all variants — 21,000 + exact calldata gas + calibrated environment overhead (§5) |
 | Deployment mode | `initCode` present in all W1-cold AA ops; absent in the W1-warm measured op |
 | Bundler | the same in-repo instrumented bundler, same beneficiary |
 | Keys | derived from (seed, role) only |
@@ -65,25 +66,25 @@ runs) and by the Foundry/live tests:
 **B0.** w1 sender `W1Token.transfer(EOA)`; w2 sender sends `65,000 × 2 gwei`;
 w3 EOA `W1Token.transfer(destination)`.
 
-**B1 W1-cold.** w1 token → counterfactual account; bundler calibrates
-preVerificationGas; w2 sender sends exactly the EntryPoint required prefund
+**B1 W1-cold.** w1 token → counterfactual account; bundler prices
+preVerificationGas (§5); w2 sender sends exactly the EntryPoint required prefund
 `(300,000 + 60,000 + PVG) × 2 gwei`; w3 bundler `handleOps([op])`, op =
 `initCode` + `execute(...)`, empty `paymasterAndData`. Unused prefund is
 credited to the account's EntryPoint deposit.
 
 **B1 W1-warm.** *Warm-up* (excluded): sender funds the deploy-only op's
 prefund; bundler includes an op with `initCode` and empty `callData`.
-*Workflow*: w1 token; calibration; w2 sender sends the full required prefund
+*Workflow*: w1 token; PVG estimate (§5); w2 sender sends the full required prefund
 of the measured op (a transfer into the now-deployed proxy, 60,000-gas limit);
 w3 op without `initCode`, nonce 1.
 
 **B2-Allowlist W1-cold.** w1 token; w2 sponsor operator
-`ObservablePaymaster.setSponsored(account, true)`; calibration; w3 op =
+`ObservablePaymaster.setSponsored(account, true)`; PVG estimate (§5); w3 op =
 B1's op + `paymasterAndData = paymaster ‖ uint128(60,000) ‖ uint128(0)`.
 Rule: sponsor ⇔ `sponsored[userOp.sender] == true`; otherwise validation
 reverts (`AA33`).
 
-**B2-Signature W1-cold.** w1 token; calibration; w3 op = B1's op +
+**B2-Signature W1-cold.** w1 token; PVG estimate (§5); w3 op = B1's op +
 `paymasterAndData = paymaster ‖ uint128(60,000) ‖ uint128(0) ‖
 abi.encode(uint48 validUntil=0, uint48 validAfter=0) ‖ sponsorSig(65) ‖
 uint16(65) ‖ PAYMASTER_SIG_MAGIC`. No sponsor transaction. The sponsor signer
@@ -99,6 +100,18 @@ only what the pinned tree defines: `UserOperationLib.getSignedPaymasterData`,
 `contracts/test/TestPaymasterWithSig.sol` with a toy check),
 `_packValidationData`, and the same raw-digest ECDSA verification
 `SimpleAccount` uses. No new message format or domain was designed.
+
+**This is not a new cryptographic construction.** B2-Signature is an ordinary
+public signature-Paymaster baseline: the sponsor signs
+`EntryPoint.getUserOpHash(op)` as a raw 32-byte digest (no EIP-191 wrapping);
+the EntryPoint's ERC-4337 EIP-712 domain supplies the chain-id and EntryPoint
+binding; the v0.9 Paymaster signature bytes are excluded from that hash exactly
+as the pinned `UserOperationLib`/`paymasterDataKeccak` define; the EntryPoint
+nonce provides inclusion replay protection; and the base configuration signs
+`validUntil = validAfter = 0`, which the EntryPoint treats as **unbounded
+validity**. The 0/0 window is kept deliberately for D1: a finite window would
+add a timing feature and complicate the initial controlled comparison. Varying
+it is a possible later ablation.
 
 **Signed message.** The 32-byte `userOpHash` passed by the EntryPoint to
 `validatePaymasterUserOp`, i.e. `EntryPoint.getUserOpHash(userOp)`:
@@ -127,7 +140,8 @@ recovers with OpenZeppelin `ECDSA.tryRecover` and compares with the immutable
 | Sender bound? | Yes (test: authorization of account A attached to account B's op → `AA34`) |
 | Nonce bound? | Yes, the full 256-bit key‖sequence (test: reuse on nonce+1 → `AA34`) |
 | initCode / callData bound? | Yes (test: amount changed after authorization, account re-signs → `AA34`) |
-| Gas fields bound? | Yes: `accountGasLimits`, `preVerificationGas`, `gasFees`, both Paymaster gas limits (test: preVerificationGas+1 → `AA34`) |
+| Gas fields bound? | Yes, each isolated by a single-field mutation test (valid sponsor authorization → mutate one field → re-sign the account → `AA34`): `preVerificationGas`, `maxFeePerGas`, `maxPriorityFeePerGas`, `verificationGasLimit`, `callGasLimit`, `paymasterVerificationGasLimit`, `paymasterPostOpGasLimit` |
+| initCode / factory data isolated? | Yes: a trailing byte appended to `createAccount(owner, salt)` (factory ignores it, same sender, account still deploys and validates) → `AA34`. Each mutation test first proves the unmutated op is accepted |
 | Validity window bound? | Yes: `validUntil`/`validAfter` are signed Paymaster data enforced by the EntryPoint (tests: expired → `AA32`; window changed after signing → `AA34`) |
 | Signature bytes bound? | No, by v0.9 design: excluded from the hash, but the suffix's presence is hashed (test: hash equal with placeholder vs real signature; differs without the suffix) |
 | Replay prevention | EntryPoint nonce: an included op cannot be included again (`AA25`), and any other nonce changes the hash. The Paymaster keeps no replay state. W1 signs an unbounded window (0/0), so a signed, never-included op stays sponsorable until its nonce is consumed |
@@ -135,125 +149,179 @@ recovers with OpenZeppelin `ECDSA.tryRecover` and compares with the immutable
 | Wrong/missing signature | returns `SIG_VALIDATION_FAILED` → EntryPoint `AA34 signature error`; malformed signed data reverts (`AA33`) |
 | Human review | still required for this binding (`docs/research-plan.md` §18) |
 
-## 5. preVerificationGas calibration (`break_even_calibration_v1`)
+## 5. preVerificationGas: calibration phase vs. experiment phase
 
-The earlier fixed preVerificationGas (50,000) left the bundler ~17,800 gas
-short per operation. Measuring it showed the shortfall was dominated by a
-**one-time 25,000-gas new-account charge**: the beneficiary was a fresh empty
-address, so the EntryPoint's compensation transfer created it. With that
-removed, a fixed 50,000 would have *over*-paid by ~7,000 gas. The beneficiary
-is now pre-funded in setup (a production beneficiary already exists), and
-preVerificationGas is calibrated per operation
-(`experiments/workloads/w1/pvg.py`):
+The first fixed preVerificationGas (50,000) left the bundler ~17,800 gas short
+per operation; measurement showed that was dominated by a **one-time 25,000-gas
+new-account charge** on an unfunded beneficiary. The beneficiary is pre-funded
+in setup, and preVerificationGas is priced in two separate phases.
 
-1. Build the op with provisional PVG₀ = 50,000 and real signatures; perform any
-   state preparation it needs (B1: the prefund transfer).
-2. In an `evm_snapshot`, broadcast the exact `handleOps([op], beneficiary)`
-   bundle; read receipt `gasUsed` G₀ and `UserOperationEvent.actualGasUsed`
-   A₀; `evm_revert`. Nothing from the dry run survives.
-3. Gas the EntryPoint does not charge: `U = G₀ − (A₀ − PVG₀)`, decomposed as
-   `U = 21,000 + calldataGas(bundle₀) + O`, where calldataGas is EIP-2028 over
-   the exact encoded bytes (4 / 16 gas per zero / non-zero byte) and O is the
-   EntryPoint's unmeasured overhead (ABI decoding, loop prologue,
-   `BeforeExecution`, `UserOperationEvent`, `_compensate`, net of refunds).
-4. Solve `PVG = 21,000 + calldataGas(bundle(PVG)) + O` for the final op,
-   re-signing each iteration; iterate monotonically until the value covers its
-   own calldata. Surplus is reported.
-5. The EIP-7623 (Prague) calldata floor is checked and must not bind.
+**Calibration phase** (`make calibrate-pvg` →
+`python3 -m experiments.workloads.w1.calibrate --seed 910001 --seed 910002`,
+method `break_even_calibration_v1`, `pvg.calibrate`). For every AA variant and
+seed, dry-run the exact encoded `handleOps([op], beneficiary)` bundle inside an
+`evm_snapshot` and revert, then decompose the gas the EntryPoint does not charge:
+`O = G₀ − (A₀ − PVG₀) − 21,000 − calldataGas(bundle₀)` (EIP-2028: 4 / 16 gas per
+zero / non-zero byte; the EIP-7623 floor is checked not to bind). The
+calibration requires **one O per operation shape across every variant and
+seed**, the same environment fingerprint in every run, and reconciliation with
+no bundler subsidy; otherwise it fails. It writes the committable artifact
+`baselines/w1_b0_b2/calibration/pvg-overhead.json`:
 
-This is a zero-margin break-even value for this bundler, bundle size 1, this
-devnet. Snapshot dry runs are a devnet facility; a production bundler must
-estimate instead. The dry run is logged in the raw bundler log as a
-`pvg_calibration` event, not as a `bundler_private` row.
+| Recorded | Value |
+|---|---|
+| O, shape `execute_call` (non-empty callData: every measured W1 op) | **14,985 gas** |
+| O, shape `empty_calldata` (deploy-only warm-up op) | **13,708 gas** |
+| samples | 10 (B1 cold, B1 warm measured + warm-up, B2-Allowlist, B2-Signature) × 2 seeds, all equal within shape |
+| environment fingerprint | EntryPoint commit `b36a1ed5…`; deployed-bytecode sha256 of EntryPoint, SimpleAccountFactory, SimpleAccount, both Paymasters; bundler version `privgas-minibundler-v1`; bundle size 1; beneficiary pre-funded; chain id 31337; hardfork `prague`; anvil version |
+| also | creation timestamp, method, matched-config sha256, provisional PVG, seed **commitments** only |
+
+**Experiment phase** (default `pvg_mode="calibrated_overhead"`, method
+`calibrated_overhead_v1`, `pvg.estimate`). For each research sample:
+
+```
+PVG = 21,000 + calldataGas(exact final encoded handleOps calldata) + O[shape]
+```
+
+iterated to the smallest covering fixed point, re-signing each step because PVG
+changes the hash, the signatures and the calldata. **Nothing is executed to
+price the operation**: every run records `environment.evm_snapshots_taken` (0
+in every experiment run, tested), logs a `pvg_estimate` event (not
+`pvg_calibration`), and records the artifact sha256 and the O it used.
+
+**Recalibration is required** — the runner raises `RecalibrationRequired`
+before sending any transaction — if the fingerprint changes (EntryPoint
+version/bytecode, account/factory/Paymaster bytecode, bundler version, bundle
+size, beneficiary funding, chain id, hardfork, anvil version) or the artifact is
+missing. Bundler logic changes that affect the encoded bundle or EntryPoint call
+must bump `BUNDLER_ID`. The exact-operation dry run remains available as
+`pvg_mode="dry_run"` for calibration and diagnostics only.
+
+Assumptions behind this separation: O is independent of the PVG value (PVG only
+changes calldata bytes and prefund amounts, never EntryPoint execution paths);
+O is constant within an op shape (verified across initCode present/absent,
+Paymaster absent/allowlist/signature, and calldata 900–1,188 bytes); bundles
+contain one op. A multi-op bundle or a new op shape needs recalibration.
 
 **Subsidy assertion.** Reconciliation fails if the bundler's net is worse than
-−100 gas × price (`SUBSIDY_TOLERANCE_GAS`); a test re-injects the old ~17.8k
-shortfall and confirms it is caught.
+−100 gas × price. A test re-injects the old 17.8k shortfall and confirms it is
+caught.
 
-| Variant | PVG | = 21,000 | + calldata gas (bytes) | + overhead O | surplus | bundle gas | UserOp gas | **bundler net** |
+Final representative runs (`20260915T002323Z`, experiment mode):
+
+| Variant | PVG | = 21,000 | + calldata gas (bytes) | + O | surplus | bundle gas | UserOp gas | **bundler net** |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | B1 W1-cold | 42,813 | 21,000 | 6,828 (996) | 14,985 | 0 | 288,831 | 288,831 | **0** |
-| B1 W1-warm (measured op) | 41,889 | 21,000 | 5,904 (900) | 14,985 | 0 | 114,990 | 114,990 | **0** |
-| B1 W1-warm (warm-up op, excluded) | 39,816 | — | — | — | — | 257,649 | 257,649 | 0 |
+| B1 W1-warm | 41,901 | 21,000 | 5,904 (900) | 14,985 | 12 | 114,990 | 115,002 | **+12 gas** |
 | B2-Allowlist W1-cold | 43,345 | 21,000 | 7,360 (1,060) | 14,985 | 0 | 271,121 | 271,121 | **0** |
-| B2-Signature W1-cold | 44,745 | 21,000 | 8,748 (1,188) | 14,985 | 12 | 276,668 | 276,680 | **+12 gas (+24 gwei)** |
+| B2-Signature W1-cold | 44,733 | 21,000 | 8,748 (1,188) | 14,985 | 0 | 276,668 | 276,668 | **0** |
 
-The +12 gas is deterministic rounding: re-signing changed the zero-byte count
-of a fresh signature, and the monotone iteration keeps the covering value.
-Residuals observed in development runs with other seeds were 0–24 gas, always
-in the bundler's favour. O was identical (14,985) for every measured op.
+The +12 gas is deterministic rounding from a signature zero-byte flip during the
+fixed-point search; which variant gets it depends on the search's starting
+value (the earlier dry-run mode put it on B2-Signature instead).
 
 ## 6. REAL cost table
 
-Representative runs `20260914T160148Z-*` (seed held privately). All values in
-**gwei**; raw wei in `data/private/baselines/<experiment>/<run>/w1_cost_reconciliation.json`;
-cross-variant summary in `results/w1-baselines/20260914T160148Z/comparison.json`.
-Effective gas price 2 gwei everywhere (1 burned, 1 priority). Balances are
-compared from the start of the measured workflow (after warm-up for W1-warm).
+Representative runs `20260915T002323Z-*` (experiment-mode PVG, schema 4.0.0;
+seed held privately). All values in **gwei**; raw wei in
+`data/private/baselines/<experiment>/<run>/w1_cost_reconciliation.json`;
+summary in `results/w1-baselines/20260915T002323Z/comparison.json`. Effective
+gas price 2 gwei everywhere (1 burned, 1 priority). Balances are compared from
+the start of the measured workflow (after warm-up for W1-warm).
 
 | Quantity | B0 | B1 cold | B1 warm | B2-Allowlist cold | B2-Signature cold |
 |---|---:|---:|---:|---:|---:|
-| Setup gas (identical, excluded) | 7,295,025 | 7,295,025 | 7,295,025 | 7,295,025 | 7,295,025 |
-| Warm-up gas / ETH consumed (excluded) | — | — | 278,649 / 557,298 | — | — |
+| Setup gas (identical, excluded from cost; public trace) | 7,295,025 | 7,295,025 | 7,295,025 | 7,295,025 | 7,295,025 |
+| Warm-up gas / ETH consumed (excluded from cost; public trace) | — | — | 278,649 / 557,298 | — | — |
 | Asset-transfer tx gas (w1) | 51,252 | 51,252 | 51,252 | 51,252 | 51,252 |
 | ETH-allowance tx gas (w2) | 21,000 | 21,000 | 25,868 | — | — |
-| ETH sent directly to recipient | 130,000 | 805,626 | 803,778 | 0 | 0 |
-| Recipient action gas | 46,452 (tx) | 288,831 (UserOp) | 114,990 (UserOp) | 271,121 (UserOp) | 276,680 (UserOp) |
-| of which preVerificationGas | — | 42,813 | 41,889 | 43,345 | 44,745 |
-| UserOperation charge | — | 577,662 | 229,980 | 542,242 | 553,360 |
-| Paymaster charge (= deposit decrease) | — | 0 | 0 | 542,242 | 553,360 |
-| Paymaster deposit start → end | — | — | — | 100,000,000 → 99,457,758 | 100,000,000 → 99,446,640 |
+| ETH sent directly to recipient | 130,000 | 805,626 | 803,802 | 0 | 0 |
+| Recipient action gas | 46,452 (tx) | 288,831 (UserOp) | 115,002 (UserOp) | 271,121 (UserOp) | 276,668 (UserOp) |
+| of which preVerificationGas | — | 42,813 | 41,901 | 43,345 | 44,733 |
+| UserOperation charge | — | 577,662 | 230,004 | 542,242 | 553,336 |
+| Paymaster charge (= deposit decrease) | — | 0 | 0 | 542,242 | 553,336 |
+| Paymaster deposit start → end | — | — | — | 100,000,000 → 99,457,758 | 100,000,000 → 99,446,664 |
 | Account deployment in measured action | no | yes | no | yes | yes |
 | Unused recipient ETH | 37,096 (EOA) | 227,964 | 573,798 ¹ | 0 | 0 |
 | Remaining recipient EntryPoint deposit | 0 | 227,964 | 573,798 ¹ | 0 | 0 |
 | Bundle tx gas | — | 288,831 | 114,990 | 271,121 | 276,668 |
-| Bundler reimbursement (beneficiary Δ) | — | 577,662 | 229,980 | 542,242 | 553,360 |
-| **Bundler net** | — | **0** | **0** | **0** | **+24** |
+| Bundler reimbursement (beneficiary Δ) | — | 577,662 | 230,004 | 542,242 | 553,336 |
+| **Bundler net** | — | **0** | **+24** | **0** | **0** |
 | Sponsor authorization cost | — | — | — | 95,852 (`setSponsored`, 47,926 gas) | 0 (off-chain signature) |
-| **Sender cost** | 274,504 | 950,130 | 958,018 | 102,504 | 102,504 |
+| **Sender cost** | 274,504 | 950,130 | 958,042 | 102,504 | 102,504 |
 | **Recipient cost (own funds)** | 0 | 0 | 0 | 0 | 0 |
-| **Sponsor cost** | 0 | 0 | 0 | 638,094 | 553,360 |
+| **Sponsor cost** | 0 | 0 | 0 | 638,094 | 553,336 |
 | **Total ETH consumed by workflow** (Σ tx fees) | 237,408 | 722,166 | 384,220 | 740,598 | 655,840 |
 | Accounting checks | 13/13 | 22/22 | 23/23 | 22/22 | 22/22 |
 
-¹ B1 warm: the measured workflow starts with the warm-up op's leftover deposit
-(284,334). Reported "unused" is the workflow-window delta `allowance − charge`;
-the account's end state is 284,334 ETH + 573,798 deposit.
+¹ B1 warm starts the measured workflow with the warm-up op's leftover deposit
+(284,334); "unused" is the workflow-window delta `allowance − charge`.
 
-Transferred-but-unspent ETH is never counted as consumed: it appears only as
-unused recipient ETH / remaining deposit.
+Transferred-but-unspent ETH is never counted as consumed.
 
-**Derived by difference** (`compare.derived`, with confounds):
+**Derived by difference** (`compare.derived`, with confounds): account
+deployment component (B1 cold − B1 warm) **173,829 gas** of UserOp gas (912 of
+it PVG; confounded by the nonce's first write, initCode calldata and warm's
+starting deposit); signature-authorization overhead (B2-Signature −
+B2-Allowlist) **5,547 gas** = 1,388 PVG + 4,159 validation/execution, while
+B2-Allowlist instead pays a 47,926-gas `setSponsored` transaction.
 
-- *Account deployment component* (B1 cold − B1 warm): **173,841 gas** of
-  UserOperation gas (924 of it preVerificationGas). Confounds: the EntryPoint
-  nonce's first write (0→1, zero→non-zero) in cold vs 1→2 in warm; initCode
-  calldata; warm's non-empty starting deposit.
-- *Signature-authorization overhead* (B2-Signature − B2-Allowlist UserOp gas):
-  **5,559 gas** = 1,400 preVerificationGas (128 more encoded calldata bytes)
-  + 4,159 validation/execution (ecrecover, decoding; net of the allowlist's
-  storage read). B2-Allowlist instead pays a separate 47,926-gas `setSponsored`
-  transaction per account.
+## 7. R1 instantiation and the complete public trace
 
-## 7. Recorder integration (schema 3.0.0)
+R1 is **economic funding source ↔ operation** (`docs/threat-model.md`). The
+immediate gas payer is public context and is recorded separately.
+
+| | Immediate gas payer (`immediate_gas_payer_kind`, public) | Economic funding source (hidden R1 answer) | Subject operation |
+|---|---|---|---|
+| B0 | `eoa_balance` — the recipient EOA | the wallet that sent ETH to the EOA (the asset sender) | action tx hash |
+| B1 cold / warm | `smart_account_entrypoint_deposit` — the SimpleAccount | the wallet that sent ETH to the account, which the account forwarded into its EntryPoint deposit (the asset sender; in W1-warm also the warm-up funding) | measured userop hash |
+| B2-Allowlist | `paymaster_entrypoint_deposit` — `ObservablePaymaster` | the sponsor-operator wallet that called `deposit()` for the Paymaster | measured userop hash |
+| B2-Signature | `paymaster_entrypoint_deposit` — `SignatureVerifyingPaymaster` | the sponsor-operator wallet that called `deposit()` for the Paymaster | measured userop hash |
+
+In B0/B1 the economic funder coincides in value with the asset sender; the two
+remain separate fields. The sponsor *signer* of B2-Signature is an authorization
+key, not a funding source.
+
+**Complete public trace.** Every mined transaction is recorded, including
+setup and warm-up, each row with a content-derived `trace_phase`. The cost
+window is private (`w1_cost_window.json`).
+
+| Run | public rows | infrastructure | funding | authorization | application | settlement | in cost window |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| B0 | 18 | 6 | 10 | 0 | 2 | 0 | 3 |
+| B1 cold | 22 | 7 | 11 | 0 | 2 | 2 | 7 |
+| B1 warm | 26 | 7 | 13 | 0 | 2 | 4 | 6 |
+| B2-Allowlist | 21 | 7 | 9 | 1 | 2 | 2 | 6 |
+| B2-Signature | 20 | 7 | 9 | 0 | 2 | 2 | 5 |
+
+Public but **excluded from cost**: faucet funding of deployer / asset sender /
+bundler / sponsor operator / beneficiary (`funding`); the five contract
+deployments and the token mint (`infrastructure`); the sponsor operator's two
+Paymaster `deposit()` calls and their `Deposited` events (`funding`); for
+W1-warm, the warm-up ETH transfer, bundle, `AccountDeployed`, `Deposited` and
+`UserOperationEvent`. Included in both: asset delivery, B0/B1 ETH allowance,
+`setSponsored` (B2-Allowlist), the measured bundle and its events.
+
+Evidence present (tested, `TestR1PublicTrace`): B0 — the funder→EOA ETH edge
+precedes the action; B1 — funder→account ETH edge, the account's `Deposited`
+event, and the unsponsored op; B2-Allowlist — sponsor-wallet→Paymaster
+`deposit()` with `Deposited`, the `setSponsored(account, true)` authorization
+row (sent by the same wallet) before the op, and the op naming the Paymaster;
+B2-Signature — the same funding evidence and op, and **no** authorization row.
+No inference is implemented.
+
+## 7a. Recorder integration (schema 4.0.0)
 
 Measured runs (`data_origin: "measured"`, gitignored):
 `data/public/baselines/{b0-w1-cold, b1-w1-cold, b1-w1-warm,
-b2-allowlist-w1-cold, b2-signature-w1-cold}/20260914T160148Z-*/`.
-
-| Run | public rows | bundler rows | notes |
-|---|---:|---:|---|
-| B0 W1-cold | 3 | none (no `observer_a2/`) | no UserOperation fields, no Paymaster |
-| B1 W1-cold | 7 | 1 | `paymaster` null on every row |
-| B1 W1-warm | 11 | 2 | includes the warm-up rows (on chain, part of T); manifest `components.workload.role` = ablation |
-| B2-Allowlist W1-cold | 6 | 1 | `paymaster_event` / `paymaster_policy` row with `subject_account` |
-| B2-Signature W1-cold | 5 | 1 | no authorization row; different Paymaster address |
-
-Schema 3.0.0 changes: `baseline_id` `B2` → `B2-Allowlist`, `B2-Signature`;
-`workload_id` `W1` → `W1-cold`, `W1-warm` (with a rule rejecting `W1-warm` for
-non-AA baselines). Leakage self-check: 0 findings over 9 runs (5 measured, 4
-synthetic examples). The schema-2.0.0 measured runs were moved to
-`data/private/archive/schema-2.0.0/` (not deleted).
+b2-allowlist-w1-cold, b2-signature-w1-cold}/20260915T002323Z-*/` with 18 / 22 /
+26 / 21 / 20 public rows and 0 / 1 / 2 / 1 / 1 bundler rows. B0 has no
+`observer_a2/`; B1 rows carry no Paymaster; B2 variants carry distinct
+`baseline_id`s and Paymaster addresses; bundler data stays in its own
+directory. Leakage self-check: 0 findings over 9 runs. The 3.0.0 measured runs
+were moved to `data/private/archive/schema-3.0.0/`. Attacker-side readers now
+refuse `data/raw/` as well as `data/private/`, and raw chain dumps no longer
+carry role-naming step labels.
 
 ## 8. The in-repo bundler is experimental
 
@@ -270,24 +338,33 @@ integrated.
 
 ## 9. Tests
 
-- Foundry (`baselines/w1_b0_b2/test`, 35): B1 success / `AA21` / `AA24`;
-  B2-Allowlist success, `AA33`, revocation, owner-only; **B2-Signature (17)**:
-  valid authorization with zero ETH and no allowlist, wrong signer, missing
-  signature, wrong sender, modified call, modified gas field, replay (`AA25`),
-  next-nonce reuse, other EntryPoint domain, other chain id, other Paymaster,
-  expired window (`AA32`), window tampering, hash excludes signature bytes but
-  not suffix presence, suffix matches upstream `encodePaymasterSignature`,
-  no allowlist state, EntryPoint-only validation; matching of B1 / B2-Allowlist
-  / B2-Signature ops and account code. No cost figure comes from Forge.
-- Live (`experiments/workloads/w1/tests`, 39): all variants' success paths,
-  node-rejected B0 underfunding, `AA21`/`AA33`/`AA34` rejections, warm-up
-  excluded from cost, deployment component, bundler subsidy within tolerance,
-  calibration decomposition equals the mined bytes, subsidy assertion catches
-  a re-injected shortfall, no unused-gas penalty, 20 fairness checks,
-  byte-identical application call, fee policy, seed determinism, recording
-  (distinct baseline ids, warm ablation labelling, A2 separation,
-  byte-identical regeneration, rejected op A2-only, leakage self-check),
-  dependency pin.
+- Foundry (`baselines/w1_b0_b2/test`, 43): B0 token semantics; B1 success /
+  `AA21` / `AA24`; B2-Allowlist success, `AA33`, revocation, owner-only;
+  **B2-Signature (25)**: valid authorization; wrong signer; missing signature;
+  wrong sender; modified call; replay (`AA25`); next-nonce reuse; other
+  EntryPoint; other chain id; other Paymaster; expired window (`AA32`); window
+  tampering; hash excludes signature bytes but not suffix presence; suffix
+  matches upstream encoding; no allowlist state; EntryPoint-only validation;
+  and single-field mutations of initCode/factory data, `maxFeePerGas`,
+  `maxPriorityFeePerGas`, `verificationGasLimit`, `callGasLimit`,
+  `preVerificationGas`, `paymasterVerificationGasLimit`,
+  `paymasterPostOpGasLimit` (each with an accepted control), plus a helper
+  sanity test; matching of B1 / B2 ops and account code. No cost figure comes
+  from Forge.
+- Live and static (`experiments/workloads/w1/tests`, 51): all variants' success
+  and rejection paths; warm-up excluded from cost; bundler subsidy within
+  tolerance; PVG decomposition equals the mined bytes; subsidy assertion
+  catches a re-injected shortfall; no unused-gas penalty; **experiment runs take
+  no snapshots and use the artifact's O; dry-run mode still agrees within 24
+  gas; a changed fingerprint raises `RecalibrationRequired`; calibration with a
+  fresh seed reproduces the artifact**; **R1 trace completeness (every mined tx
+  recorded) and per-baseline funding evidence; ground truth separates economic
+  funder, immediate payer and operation; cost window private**; 20 fairness
+  checks; determinism; recording, regeneration, A2-only rejection, leakage
+  self-check; calibration artifact consistency; dependency pin.
+- Recorder (`experiments/tests`, 116): schema 4.0.0 incl. payer-kind rule,
+  `payer_conflation`, pre-4.0.0 field rejection, content-derived `trace_phase`,
+  raw-path reader guard.
 
 ## 10. Remaining fairness differences
 
@@ -313,7 +390,8 @@ integrated.
    Paymasters deployed and funded.
 10. **One scenario per run**; candidate sets of size one; no timing or actor
     randomisation.
-11. **B2 warm variants not implemented.**
+11. **B2 warm variants not implemented** (deliberately: B1 warm is the
+    account-deployment ablation before Prompt 4).
 
 ## 11. Adversary tiers and trust assumptions
 
@@ -335,8 +413,11 @@ details and `scripts/env-report.sh` output.
 
 ## 13. History
 
-The first version of these baselines (schema 2.0.0: a single `B2` allowlist
-baseline, fixed preVerificationGas, unfunded beneficiary) and the
+Schema 3.0.0 runs (per-sample exact-bundle PVG dry runs; R1 anchored on the
+Paymaster contract; no setup-time public events) are archived under
+`data/private/archive/schema-3.0.0/`. The first version of these baselines
+(schema 2.0.0: a single `B2` allowlist baseline, fixed preVerificationGas,
+unfunded beneficiary) and the
 synthetic-fixture corrections it forced are recorded in `docs/decision-log.md`
 (2026-09-14 entries). Its measured runs are archived, not deleted.
 

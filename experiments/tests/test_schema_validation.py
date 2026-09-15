@@ -120,9 +120,9 @@ class TestMalformedValues(RejectionTestCase):
                             code="malformed_hash")
 
     def test_h_unsupported_schema_version(self):
-        # 1.0.0 and 2.0.0 are superseded versions: their rows are not
-        # readable by 3.0.0 code (docs/experiment-schema.md Sec. 9).
-        for bad in ("0.9", "1.0", "1.0.0", "2.0.0", "4.0.0", "", None, 1.0):
+        # 1.0.0-3.0.0 are superseded versions: their rows are not readable by
+        # 4.0.0 code (docs/experiment-schema.md Sec. 9).
+        for bad in ("0.9", "1.0", "1.0.0", "2.0.0", "3.0.0", "5.0.0", "", None, 1.0):
             with self.subTest(bad=bad):
                 self.assertRejected("public_events",
                                     F.public_event(schema_version=bad),
@@ -227,6 +227,42 @@ class TestBaselineCapabilities(RejectionTestCase):
         for b in ("B2-Allowlist", "B2-Signature"):
             with self.subTest(baseline=b):
                 validate_record("public_events", F.erc4337_public_event(b))
+
+    def test_r1_economic_funder_and_immediate_payer_are_separate_fields(self):
+        for b, kind in (("B0", "eoa_balance"), ("B1", "smart_account_entrypoint_deposit"),
+                        ("B2-Signature", "paymaster_entrypoint_deposit")):
+            with self.subTest(baseline=b):
+                row = F.ground_truth(b)
+                validate_record("ground_truth", row)
+                self.assertEqual(row["immediate_gas_payer_kind"], kind)
+                self.assertNotIn("funding_wallet_id", row)
+
+    def test_immediate_payer_kind_must_match_the_baseline_mechanism(self):
+        self.assertRejected("ground_truth",
+                            F.ground_truth("B2-Allowlist", immediate_gas_payer_kind="eoa_balance"),
+                            code="baseline_capability_violation")
+
+    def test_paymaster_contract_cannot_be_the_economic_funder(self):
+        row = F.ground_truth("B2-Signature")
+        row["public_anchors"]["economic_funding_address"] = row["public_anchors"][
+            "immediate_gas_payer_address"]
+        self.assertRejected("ground_truth", row, code="payer_conflation")
+
+    def test_pre_4_funding_fields_are_rejected(self):
+        row = F.ground_truth("B1")
+        row["funding_wallet_id"] = row.pop("economic_funding_source_id")
+        self.assertRejected("ground_truth", row)
+        self.assertRejected("public_events", F.public_event(funding_wallet_id="funder_x"),
+                            exc=Exception)
+
+    def test_trace_phase_is_content_derived(self):
+        validate_record("public_events", F.public_event(
+            event_type="native_transfer", calldata_class="native_value_only",
+            asset_type="native", asset_contract=None, method_selector=None))
+        self.assertRejected("public_events", F.public_event(trace_phase="funding"),
+                            code="trace_phase_inconsistent")
+        self.assertRejected("public_events", F.public_event(trace_phase="sponsor_link"),
+                            code="not_in_enum")
 
     def test_warm_workload_only_for_account_abstraction_baselines(self):
         self.assertRejected("public_events",

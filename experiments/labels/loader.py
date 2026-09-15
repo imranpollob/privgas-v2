@@ -113,7 +113,7 @@ def accounts_by_actor(run: GroundTruthRun) -> Dict[str, Set[str]]:
         if not isinstance(actor, str) or actor == "not_applicable":
             continue
         for field in ("stealth_account_id", "established_wallet_id",
-                      "funding_wallet_id", "asset_sender_id"):
+                      "economic_funding_source_id", "asset_sender_id"):
             value = row.get(field)
             if isinstance(value, str) and value != "not_applicable":
                 out[actor].add(value)

@@ -19,13 +19,14 @@ What it does, per UserOperation:
 4. **observe inclusion** -- receipt, inclusion timestamp, and the mined hash
    (public on chain from that point on).
 
-Plus, before the wallet signs the final operation, **preVerificationGas
-calibration** (``calibrate_pre_verification_gas``; method in ``pvg.py``): a
-break-even value derived from a dry run of the exact encoded bundle inside a
-reverted devnet snapshot, logged to the raw bundler log as a
-``pvg_calibration`` event (it is the analogue of an
-``eth_estimateUserOperationGas`` request, not a submission, and produces no
-``bundler_private`` row).
+Plus, before the wallet signs the final operation, a **preVerificationGas
+estimate** (``estimate_pre_verification_gas``; ``pvg.estimate``):
+21,000 + calldata gas of the exact final bundle + the calibrated EntryPoint
+overhead read from the calibration artifact (``calibration.py``). It executes
+nothing. It is logged to the raw bundler log as a ``pvg_estimate`` event (the
+analogue of ``eth_estimateUserOperationGas``; no ``bundler_private`` row).
+The exact-bundle snapshot dry run (``calibrate_pre_verification_gas``) remains
+available only as the calibration / diagnostic mode.
 
 THIS IS AN INSTRUMENTED EXPERIMENTAL BUNDLER. It does not establish ERC-7562
 or production compatibility. What it deliberately does NOT do, and therefore
@@ -101,6 +102,14 @@ class InstrumentedBundler:
         entry = {"bundler_id": BUNDLER_ID, "rpc_endpoint_id": RPC_ENDPOINT_ID, **entry}
         self.log.append(entry)
         return entry
+
+    def estimate_pre_verification_gas(self, *, label: str, overhead: int, op_shape: str,
+                                      artifact_sha256: str, build_signed_op) -> pvg.PvgEstimate:
+        est = pvg.estimate(beneficiary=self.beneficiary, overhead=overhead, op_shape=op_shape,
+                           artifact_sha256=artifact_sha256, build_signed_op=build_signed_op)
+        self._emit({"event": "pvg_estimate", "label": label,
+                    "timestamp_utc": self.clock(), **est.as_dict()})
+        return est
 
     def calibrate_pre_verification_gas(self, *, label: str, provisional: int,
                                        build_signed_op, prepare=None) -> pvg.PvgCalibration:

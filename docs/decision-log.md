@@ -464,3 +464,76 @@ Format for each entry:
   runtime bytecode exceeds EIP-170; the separate ordinary-key broadcast
   experiment records the actual deployment failure. Documentation only; B3
   untouched.
+
+## 2026-09-14: R1 refined — economic funding source is not the immediate gas payer
+
+- **Decision**: R1 is **economic funding source ↔ operation**. The ground truth
+  records separately (schema 4.0.0): `immediate_gas_payer_kind` +
+  `public_anchors.immediate_gas_payer_address` (public context: B0 recipient
+  EOA balance, B1 SimpleAccount EntryPoint deposit, B2 Paymaster EntryPoint
+  deposit) and `economic_funding_source_id` +
+  `public_anchors.economic_funding_address` (the hidden answer: the wallet that
+  sent ETH to the B0 EOA, the wallet that funded the B1 account, the sponsor
+  wallet that funded the B2 Paymaster's deposit). A validation rule rejects a
+  sponsored row whose economic funder equals the Paymaster. `docs/threat-model.md`,
+  `docs/research-questions.md` and a refinement note in `docs/research-plan.md`
+  §6 state the definition.
+- **Why**: schema 3.0.0 anchored B2's funding on the Paymaster contract, which
+  is intentionally public and would make R1 trivially answerable and
+  meaningless for sponsorship privacy. Collapsing an EOA, a smart account, a
+  Paymaster contract and an economic actor into one "payer" hides exactly the
+  distinction D1 measures.
+- **Scope choice**: the funding source is defined one hop back (whoever
+  directly funded the charged balance). Deeper provenance (e.g. the devnet
+  faucet that funded the sponsor) is in the public trace, not the label.
+
+## 2026-09-14: The complete public trace is recorded; cost window is private
+
+- **Decision**: every mined transaction of a run — including setup (faucet
+  funding, deployments, Paymaster deposits) and warm-up — is recorded in
+  `public_events`, each row with a required `trace_phase`
+  (`infrastructure`/`funding`/`authorization`/`application`/`settlement`) that
+  the validator forces to be a deterministic function of the row's event type
+  and calldata class. Whether a row is in the measured cost window is written
+  only to `data/private/.../w1_cost_window.json`.
+- **Why**: "setup" is a cost-accounting boundary, not a privacy boundary. The
+  sponsor's Paymaster deposit is precisely the public evidence R1 concerns;
+  hiding it would give attacks an artificially weak trace. A public cost-window
+  flag, by contrast, would mark which transactions belong to the experiment — a
+  label leak — so it stays private.
+- **Also found and fixed**: raw chain dumps stored role-naming step labels
+  (`w2_eth_allowance`, `setup_fund_sponsor_operator`) next to each transaction,
+  although earlier docs called the dump role-free. Labels now live only in the
+  private role file, and attacker-side readers refuse `data/raw/`.
+
+## 2026-09-14: preVerificationGas calibration separated from experiment runs
+
+- **Decision**: a calibration phase (`python3 -m experiments.workloads.w1.calibrate`,
+  exact-bundle snapshot dry runs) measures the EntryPoint unmeasured overhead O
+  per operation shape and writes a committable artifact
+  (`baselines/w1_b0_b2/calibration/pvg-overhead.json`: O = 14,985 gas for
+  `execute_call`, 13,708 for `empty_calldata`; 10 samples over 2 seeds, all
+  equal within shape; environment fingerprint; seed commitments only).
+  Experiment runs price PVG as 21,000 + calldata gas of the exact final bundle +
+  O, never executing their own operation; the runner refuses to run
+  (`RecalibrationRequired`) if the fingerprint changed. The dry-run mode stays
+  available for calibration/diagnostics.
+- **Why**: rediscovering O by executing each research sample under
+  snapshot/revert is a devnet-only oracle that no real bundler has, and it ties
+  every sample's pricing to a privileged execution. O is an environment
+  property; measuring it once, reproducibly, is the defensible split.
+- **Finding**: O depends on operation shape (a deploy-only op with empty
+  callData has 1,277 gas less overhead), so the artifact is keyed by shape
+  rather than holding one number. Also, the covering fixed point's ±12-gas
+  signature-rounding surplus moved from B2-Signature (dry-run mode) to B1 warm
+  (estimate mode) because the search starts from a different value.
+
+## 2026-09-14: B2-Signature single-field mutation tests; configuration kept
+
+- **Decision**: add Forge tests that isolate initCode/factory data (trailing
+  byte keeps the sender), `maxFeePerGas`, `maxPriorityFeePerGas`,
+  `verificationGasLimit`, `callGasLimit`, `paymasterVerificationGasLimit` and
+  `paymasterPostOpGasLimit`: valid authorization → mutate one field → re-sign
+  the account → `AA34`, each after an accepted control. The signature
+  mechanism is unchanged. The 0/0 validity window is kept (a finite window
+  would add a timing feature before D1). No B2 warm variants are added.

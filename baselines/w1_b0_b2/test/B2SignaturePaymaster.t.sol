@@ -102,6 +102,103 @@ contract B2SignaturePaymasterTest is W1Base {
         submit(op);
     }
 
+    // ------------------------------------------------------------------
+    // Single-field mutation tests. Each: (1) obtain a valid sponsor
+    // authorization, (2) mutate ONLY the target field, (3) re-sign the account
+    // so account validation itself is valid, (4) expect the Paymaster
+    // authorization to fail (AA34). A control first proves the unmutated op
+    // is accepted, so a failure can only come from the mutation.
+    // ------------------------------------------------------------------
+
+    function _assertAuthorizedThenMutationRejected(PackedUserOperation memory mutated) internal {
+        deliverAsset(counterfactualAccount(recipient));
+        uint256 snap = vm.snapshotState();
+        submit(sponsoredOp(recipient, RECIPIENT_KEY)); // control: accepted
+        vm.revertToState(snap);
+        mutated = sign(mutated, RECIPIENT_KEY);
+        vm.expectRevert(AA34);
+        submit(mutated);
+    }
+
+    function _pmSignature(bytes memory pmd) internal pure returns (bytes memory sig) {
+        sig = new bytes(65);
+        for (uint256 i = 0; i < 65; i++) sig[i] = pmd[pmd.length - 10 - 65 + i];
+    }
+
+    /// paymasterAndData with explicit static gas limits and the given signature.
+    function _pmdWithLimits(uint128 verificationLimit, uint128 postOpLimit, bytes memory sig)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return abi.encodePacked(
+            address(sigPaymaster), verificationLimit, postOpLimit,
+            abi.encode(uint48(0), uint48(0)), sig, uint16(sig.length), PAYMASTER_SIG_MAGIC
+        );
+    }
+
+    function test_B2Sig_mutatedInitCodeFactoryDataIsRejected() public {
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        // Trailing byte after createAccount(owner, salt): the factory ignores it
+        // (ABI decoding) and still returns the same sender, so only keccak(initCode)
+        // changes -- the account deploys and validates normally.
+        op.initCode = abi.encodePacked(op.initCode, bytes1(0x01));
+        _assertAuthorizedThenMutationRejected(op);
+    }
+
+    function test_B2Sig_mutatedMaxFeePerGasIsRejected() public {
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        op.gasFees = bytes32((MAX_PRIORITY_FEE << 128) | (MAX_FEE + 1));
+        _assertAuthorizedThenMutationRejected(op);
+    }
+
+    function test_B2Sig_mutatedMaxPriorityFeePerGasIsRejected() public {
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        op.gasFees = bytes32(((MAX_PRIORITY_FEE - 1) << 128) | MAX_FEE);
+        _assertAuthorizedThenMutationRejected(op);
+    }
+
+    function test_B2Sig_mutatedPaymasterVerificationGasLimitIsRejected() public {
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        op.paymasterAndData = _pmdWithLimits(
+            uint128(PM_VERIFICATION_GAS_LIMIT + 1), uint128(PM_POST_OP_GAS_LIMIT), _pmSignature(op.paymasterAndData)
+        );
+        _assertAuthorizedThenMutationRejected(op);
+    }
+
+    function test_B2Sig_mutatedPaymasterPostOpGasLimitIsRejected() public {
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        op.paymasterAndData = _pmdWithLimits(
+            uint128(PM_VERIFICATION_GAS_LIMIT), uint128(PM_POST_OP_GAS_LIMIT + 1), _pmSignature(op.paymasterAndData)
+        );
+        _assertAuthorizedThenMutationRejected(op);
+    }
+
+    function test_B2Sig_mutatedVerificationGasLimitIsRejected() public {
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        op.accountGasLimits = bytes32(((VERIFICATION_GAS_LIMIT + 1) << 128) | CALL_GAS_LIMIT);
+        _assertAuthorizedThenMutationRejected(op);
+    }
+
+    function test_B2Sig_mutatedCallGasLimitIsRejected() public {
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        op.accountGasLimits = bytes32((VERIFICATION_GAS_LIMIT << 128) | (CALL_GAS_LIMIT + 1));
+        _assertAuthorizedThenMutationRejected(op);
+    }
+
+    function test_B2Sig_unmutatedPaymasterDataRebuildIsStillAccepted() public {
+        // Guards the helpers above: rebuilding paymasterAndData with the SAME
+        // limits and signature must not change the hash or the authorization.
+        deliverAsset(counterfactualAccount(recipient));
+        PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);
+        bytes32 before = entryPoint.getUserOpHash(op);
+        op.paymasterAndData = _pmdWithLimits(
+            uint128(PM_VERIFICATION_GAS_LIMIT), uint128(PM_POST_OP_GAS_LIMIT), _pmSignature(op.paymasterAndData)
+        );
+        assertEq(entryPoint.getUserOpHash(op), before);
+        submit(op);
+    }
+
     function test_B2Sig_replayOfAnIncludedOpFailsOnNonce() public {
         deliverAsset(counterfactualAccount(recipient));
         PackedUserOperation memory op = sponsoredOp(recipient, RECIPIENT_KEY);

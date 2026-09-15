@@ -72,6 +72,7 @@ make recorder-examples    # regenerate the synthetic B0/B1/B2 example runs
 make recorder-selfcheck   # scan data/public/ for leaked keys and values
 make recorder-docs        # regenerate the field tables in the schema doc
 make baselines-test       # forge + live anvil tests of the real B0/B1/B2
+make calibrate-pvg                   # calibration phase: EntryPoint overhead artifact
 make run-matched-baselines SEED=<n>   # real runs for all variants, recorded
 ```
 
@@ -85,7 +86,7 @@ establish ERC-7562 or production compatibility. The example runs
 under `recorder/examples/` remain synthetic fixtures — every row carries
 `data_origin: "synthetic_fixture"` and a `synthetic-` run_id, and the validator
 enforces both. They document the schema. They are not measurements.
-Schema version: 3.0.0.
+Schema version: 4.0.0.
 
 No attack, model, metric or privacy mechanism lives here yet. The recorder
 observes experiments; it makes no privacy claim of its own.

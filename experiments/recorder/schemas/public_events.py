@@ -82,6 +82,7 @@ CALLDATA_CLASSES = (
     "account_execute",
     "entrypoint_handle_ops",    # the bundle transaction itself: EntryPoint.handleOps
     "paymaster_policy",         # a paymaster configuration call, e.g. setSponsored
+    "contract_creation",        # a contract-deployment transaction (no target)
     "account_deploy",
     "paymaster_deposit",
     "pool_deposit",
@@ -90,6 +91,33 @@ CALLDATA_CLASSES = (
 )
 
 ASSET_TYPES = ("native", "erc20", "erc721", "none")
+
+#: Schema 4.0.0. A coarse, CONTENT-DERIVED classification of what a public
+#: event does on chain. It is never a role or intent label: it must be a
+#: deterministic function of the row's own public content (event type and
+#: calldata class), so it adds nothing an archive-node observer could not
+#: compute. In particular "funding" means "native value moved into an account
+#: or an EntryPoint deposit", whoever sent it and for whatever purpose.
+TRACE_PHASES = ("infrastructure", "funding", "authorization", "application",
+                "settlement")
+
+#: event_type -> {calldata_class -> allowed phases}; key None = any other class.
+TRACE_PHASE_RULES = {
+    "eoa_transaction": {"contract_creation": ("infrastructure",),
+                        "entrypoint_handle_ops": ("settlement",)},
+    "native_transfer": {None: ("funding",)},
+    # A token Transfer is an application event, except a mint emitted by the
+    # token's own contract-creation transaction.
+    "asset_transfer": {None: ("application", "infrastructure")},
+    "account_deployment": {None: ("infrastructure",)},
+    "user_operation_event": {None: ("settlement",)},
+    "user_operation_revert": {None: ("settlement",)},
+    "entrypoint_deposit": {None: ("funding",)},
+    "paymaster_event": {"paymaster_deposit": ("funding",),
+                        "paymaster_policy": ("authorization",),
+                        None: ("infrastructure",)},
+    "privacy_pool_event": {None: ("funding", "authorization", "settlement")},
+}
 
 OUTCOMES = ("success", "reverted", "not_included", "unknown")
 
@@ -244,6 +272,25 @@ def _rule_inclusion_consistency(record: Mapping[str, Any], stream: str) -> None:
         raise RecordValidationError(
             "outcome 'reverted' contradicts success=true", stream=stream,
             field="success", code="outcome_inconsistent")
+
+
+def derive_trace_phase(event_type: str, calldata_class: Any) -> str:
+    """The default (first allowed) phase for a row's public content."""
+    rules = TRACE_PHASE_RULES[event_type]
+    return rules.get(calldata_class, rules.get(None))[0]
+
+
+def _rule_trace_phase_is_content_derived(record: Mapping[str, Any], stream: str) -> None:
+    from ..errors import RecordValidationError
+
+    rules = TRACE_PHASE_RULES[record["event_type"]]
+    allowed = rules.get(record["calldata_class"], rules.get(None))
+    if allowed is None or record["trace_phase"] not in allowed:
+        raise RecordValidationError(
+            f"trace_phase {record['trace_phase']!r} is not derivable from "
+            f"event_type {record['event_type']!r} / calldata_class "
+            f"{record['calldata_class']!r} (allowed: {allowed})",
+            stream=stream, field="trace_phase", code="trace_phase_inconsistent")
 
 
 def _rule_asset_consistency(record: Mapping[str, Any], stream: str) -> None:
@@ -425,6 +472,17 @@ SCHEMA = StreamSchema(
         FieldSpec("event_type", check_enum, CLASS_PUBLIC, "A0",
                   "What kind of observation this row is.",
                   options={"allowed": EVENT_TYPES}),
+        FieldSpec("trace_phase", check_enum, CLASS_PUBLIC, "A0",
+                  "Coarse content-derived classification: infrastructure "
+                  "(deployments), funding (native value into an account or "
+                  "EntryPoint deposit), authorization (paymaster policy calls), "
+                  "application (asset transfers), settlement (bundles and "
+                  "UserOperation outcomes). A deterministic function of "
+                  "event_type and calldata_class, never a role or intent label; "
+                  "whether a row lies in a measured cost window is recorded "
+                  "privately, not here. Added in 4.0.0 so the complete public "
+                  "trace -- including setup-time transactions -- is recorded.",
+                  options={"allowed": TRACE_PHASES}),
         # --- privacy protocol, public parts only ------------------------------
         FieldSpec("commitment", check_hash32, CLASS_PUBLIC, "A0",
                   "Publicly emitted commitment, 0x 32-byte hex. Public because "
@@ -448,5 +506,6 @@ SCHEMA = StreamSchema(
         _rule_baseline_capabilities,
         _rule_inclusion_consistency,
         _rule_asset_consistency,
+        _rule_trace_phase_is_content_derived,
     ),
 )

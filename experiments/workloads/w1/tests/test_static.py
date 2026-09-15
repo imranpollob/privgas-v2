@@ -46,10 +46,40 @@ class TestMatchedConfig(unittest.TestCase):
     def test_pre_verification_gas_is_calibrated_not_fixed(self):
         self.assertNotIn("pre_verification_gas", self.cfg.raw["userop"])
         self.assertEqual(self.cfg.raw["userop"]["pre_verification_gas_method"],
-                         "break_even_calibration_v1")
+                         "calibrated_overhead_v1")
 
     def test_b2_carries_no_postop_limit(self):
         self.assertEqual(self.cfg.paymaster_post_op_gas_limit, 0)
+
+
+class TestCalibrationArtifact(unittest.TestCase):
+    def test_artifact_is_present_consistent_and_matches_this_build(self):
+        import subprocess
+        from experiments.workloads.w1 import calibration
+        from experiments.workloads.w1.artifacts import load_all
+        artifact = calibration.load_artifact(REPO_ROOT)
+        by_shape = artifact["entrypoint_unmeasured_overhead_by_shape"]
+        self.assertEqual(set(by_shape), set(calibration.SHAPES))
+        for s in artifact["samples"]:
+            self.assertEqual(s["entrypoint_unmeasured_overhead"], by_shape[s["op_shape"]])
+        self.assertGreaterEqual(artifact["seed_count"], 2)
+
+        def keys(o):
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    yield k
+                    yield from keys(v)
+            elif isinstance(o, list):
+                for v in o:
+                    yield from keys(v)
+
+        self.assertNotIn("seed", set(keys(artifact)), "calibration seeds only as commitments")
+        anvil = subprocess.run(["anvil", "--version"], capture_output=True, text=True)
+        if anvil.returncode == 0 and (REPO_ROOT / "baselines/w1_b0_b2/out").is_dir():
+            fp = calibration.environment_fingerprint(
+                load_config(REPO_ROOT), load_all(REPO_ROOT), anvil.stdout.strip())
+            for shape in calibration.SHAPES:
+                calibration.overhead_for(artifact, shape, fp)
 
 
 class TestKeys(unittest.TestCase):

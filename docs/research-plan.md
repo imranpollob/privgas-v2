@@ -187,6 +187,14 @@ We analyze three relations separately:
 
 Can the observer infer which funding source P is associated with operation O?
 
+*Refinement (2026-09-14, recorded in `docs/decision-log.md`; the question above
+is unchanged in intent):* P is the **economic funding source** — the wallet
+whose ETH supplied the balance that paid O's gas — not the **immediate gas
+payer** (sender EOA balance, smart-account EntryPoint deposit, or Paymaster
+EntryPoint deposit), which is normally public context. For a sponsored
+operation, "which Paymaster contract" is public and is not R1; "which sponsor
+wallet funded that Paymaster" is.
+
 ### R2 — Issuance-to-redemption linkage
 
 Can the observer infer which issuance event I supplied the private authorization consumed by O?

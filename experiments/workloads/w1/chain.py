@@ -61,8 +61,11 @@ class SentTx:
         return self.fee - self.burned
 
     def as_dict(self) -> Dict[str, Any]:
-        return {"label": self.label, "phase": self.phase, "tx": self.tx,
-                "receipt": self.receipt, "block": self.block}
+        # The step label ("w2_eth_allowance", "setup_fund_sponsor_operator", ...)
+        # names a ROLE, so it is kept out of the raw chain dump and stored only
+        # in the private role file (runner.RunResult.private["tx_labels"]).
+        return {"phase": self.phase, "tx": self.tx, "receipt": self.receipt,
+                "block": self.block}
 
 
 class TxRejected(RuntimeError):
@@ -82,6 +85,8 @@ class Chain:
     max_fee: int
     max_priority_fee: int
     sent: List[SentTx] = field(default_factory=list)
+    #: evm_snapshot calls made; experiment-mode runs must leave this at 0.
+    snapshots_taken: int = 0
 
     # --- reads --------------------------------------------------------------
 
@@ -116,7 +121,8 @@ class Chain:
         self.rpc.call("anvil_setCoinbase", [address])
 
     def snapshot(self) -> str:
-        """Devnet state snapshot; used only for the preVerificationGas dry run."""
+        """Devnet state snapshot; used only by the preVerificationGas calibration dry run."""
+        self.snapshots_taken += 1
         return self.rpc.call("evm_snapshot")
 
     def revert(self, snapshot_id: str) -> None:
