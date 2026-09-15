@@ -24,7 +24,7 @@ from experiments.workloads.d1.schedule import (SCENARIOS, check_constraints, mak
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 B3, B4 = "B3-PrivGas-v1", "B4-CrossAccount"
-S0, S1 = SCENARIOS
+S0, S1 = SCENARIOS[:2]
 
 
 class TestB4Config(unittest.TestCase):
@@ -87,7 +87,7 @@ class TestB4Schedule(unittest.TestCase):
         return make_schedule(seed, n, scen, b, self.params, start_time=1_800_000_000)
 
     def test_b4_schedule_is_the_b3_schedule(self):
-        for scen in SCENARIOS:
+        for scen in (S0, S1):  # S1b: test_s1b_static.py
             for n in (4, 8, 16, 32):
                 b3, b4 = self.sched(11, n, scen, B3), self.sched(11, n, scen, B4)
                 self.assertEqual(b3.events, b4.events)

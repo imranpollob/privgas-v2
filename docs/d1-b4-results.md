@@ -323,7 +323,8 @@ a measurement / negative result, not a main-paper ERC-4337-specific boundary.
 ## 9. Limitations
 
 - 3 replicates, N ≤ 32; per-N CIs are wide (N = 4 S1 not significant).
-- One S1 timing family, reused from the pilot. It correlates admission with delivery as
+- (Resolved by `docs/d1-s1b-results.md`: with only issuance ↔ redemption timing correlated,
+  B4 stays linkable at the same level.) One S1 timing family, reused from the pilot. It correlates admission with delivery as
   well as issuance with redemption (§6.5), so S1 linkage is understated by the pre-registered
   attacks and depends strongly on this one model.
 - The spender's Spend deploys the account (initCode, nonce 0), unlike B3's Spend; constant

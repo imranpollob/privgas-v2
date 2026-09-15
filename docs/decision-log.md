@@ -757,3 +757,36 @@ Format for each entry:
   - *another public feature (Case B)*: any exact rule with precision CI above chance and
     coverage > 0.1 in B4 S0, or `T+AA+G-minus-eq-minus-timing` / `G-minus-eq-minus-timing`
     with delta_bits CI excluding 0 in B4 S0.
+
+## 2026-09-15: Final D1 timing sanity experiment — S1b (pre-registration, before the dataset)
+
+- **Why**: the B4 ablation found that S1 drives delivery, admission, issuance and action
+  from one arrival order; in B4, rank-matching spender delivery with issuer admission
+  recovers 100% of pairs, so S1 cannot isolate issuance → redemption timing.
+- **Decision**: scenario `S1b-issuance-redemption-timing-only`
+  (`experiments/workloads/d1/schedule.py`, `s1b-config.json`). Issuance timing and
+  redemption timing use exactly S1's model and parameters (issuance at arrival A_k,
+  exponential inter-arrivals with mean 600 s; action at A_k + common offset + U(−900, +900) s).
+  Asset-sender setup, issuer-funder setup, delivery, admission and proof preparation each
+  get an independent permutation; delivery and admission are sequential phases with
+  independent exponential gaps (mean 600 s) before the issuances. Account creation cannot
+  be separated: the issuer account is deployed by its Bootstrap and the B4 spender by its
+  Spend, so both follow the correlated channels by construction. S1b is defined for B3 and
+  B4 only; B3 and B4 schedules are identical at one seed.
+- **Gates**: (1) the runner fails a run before any workflow transaction if any unintended
+  pair of orders is identical; (2) `evaluate schedule-gate` must pass before splits and
+  attacks. Scoring refuses an S1b batch without a passing gate. The gate pools public-derived
+  orders per (baseline, pair) and rejects on |z| > 3.29 for rank-match recovery or Spearman,
+  or on any identical pair, for every pair except issuance~redemption. Positive control: on
+  the B4 batch's S1 runs the gate rejects (delivery~fund identical in 12/12 B4 runs).
+- **Matrix**: B3 and B4 × S1b × N ∈ {8, 16, 32} × 3 replicates = 18 runs, pilot master seed
+  (same actors as the earlier batches; independent S1b schedule streams).
+- **Attacks**: every registered rule and learned configuration, unchanged (none added).
+- **Criteria** (pooled over N, LORO, primary convention): *B4 meaningfully linkable* =
+  delta_bits(none → T+G-minus-eq) CI excludes 0 and point estimate ≥ 0.25 × mean log2 N,
+  or FIFO / delay-window top-1 CI above chance by ≥ 0.1. *Falls to chance* = that delta_bits
+  CI contains 0 or its estimate < 0.1 × mean log2 N, and every timing rule's top-1 CI
+  contains chance. *Negative control holds* = G-minus-eq-minus-timing delta_bits CI contains 0.
+- **Stated expectation (HYPOTHESIS, recorded before data)**: the registered timing attacks
+  read only issuance / redemption order and time, which S1b keeps with S1's model, so S1b
+  should reproduce S1's registered-attack linkage within sampling error.

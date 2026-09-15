@@ -20,11 +20,12 @@ from typing import Any, Dict, List, Optional
 
 from ....labels import scan_public_output
 from ....recorder.provenance import repo_root
-from . import audit, paired, report, score
+from . import audit, paired, report, schedule_gate, score
 from .labels_io import batch_dir, export_training_labels, load_splits_verified, private_run
 
 DOCS = {"pilot": (Path("docs") / "d1-pilot-results.md", "d1-pilot-results"),
-        "b4": (Path("docs") / "d1-b4-results.md", "d1-b4-results")}
+        "b4": (Path("docs") / "d1-b4-results.md", "d1-b4-results"),
+        "s1b": (Path("docs") / "d1-s1b-results.md", "d1-s1b-results")}
 CREDIT = ("B3-PrivGas-v1", "B4-CrossAccount")
 
 COMPARISONS = [("none", "T"), ("none", "G"), ("T", "T+AA"), ("T", "T+G"), ("T+AA", "T+AA+G"),
@@ -51,12 +52,18 @@ def cmd_selfcheck(root: Path, batch: str) -> Dict[str, Any]:
             "value_scan": True, "ok": not findings}
 
 
-def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool, doc: str = "pilot") -> int:
+def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool, doc: str = "pilot",
+              compare: Optional[str] = None) -> int:
     manifest, runs = _runs(root, batch)
     sc = cmd_selfcheck(root, batch)
     if not sc["ok"]:
         print("LEAKAGE SELF-CHECK FAILED; refusing to score:\n" + "\n".join(sc["findings"][:50]))
         return 1
+    if any(r["scenario_id"] == "S1b-issuance-redemption-timing-only" for r in runs):
+        gate_path = batch_dir(root, batch) / "schedule_gate.json"
+        if not gate_path.is_file() or not json.loads(gate_path.read_text())["ok"]:
+            print("S1b SCHEDULER GATE missing or failed; refusing to score")
+            return 1
     split_body, split_sha = load_splits_verified(root, batch)
     out = batch_dir(root, batch) / f"evaluation-{round_id}"
     out.mkdir(parents=True, exist_ok=True)
@@ -100,7 +107,7 @@ def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool, doc: str =
                    if spec["baseline_id"] in ("B0", "B1") else {priv["roles"]["sponsor_operator"]})
         st["true_distinct_economic_funders"] = len(funders)
         key = (spec["baseline_id"], spec["pool_size"])
-        if key not in seen and spec["scenario_id"] == "S0-clean-shuffled":
+        if key not in seen:  # candidate sets are identical across scenarios
             seen.add(key)
             r1_rows.append(st)
             is_b3 = spec["baseline_id"] in CREDIT
@@ -182,6 +189,15 @@ def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool, doc: str =
     md = report.markdown(ctx)
     if paired_ctx is not None:
         md += paired.markdown(paired_ctx, report.md_table)
+    scen_here = sorted({r["scenario_id"] for r in runs})
+    timing_rows = paired.timing_summary(rules, learned, deltas, f"this batch {batch}", scen_here)
+    if compare:
+        timing_rows = paired.load_prior(Path(compare), ["S1-correlated-timing"]) + timing_rows
+    if any(sc != "S0-clean-shuffled" for sc in scen_here):
+        report.write_csv(out / "timing_summary.csv", [
+            {k: (json.dumps(v) if isinstance(v, tuple) else v) for k, v in r.items()}
+            for r in timing_rows])
+        md += paired.timing_markdown(timing_rows, report.md_table)
     (out / "results.md").write_text(md)
     if write_doc:
         path, marker = DOCS[doc]
@@ -196,11 +212,17 @@ def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool, doc: str =
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=("selfcheck", "export-training-labels", "score"))
+    ap.add_argument("command", choices=("selfcheck", "schedule-gate", "export-training-labels",
+                                        "score"))
     ap.add_argument("--batch", required=True)
     ap.add_argument("--round", default="a1")
     ap.add_argument("--root", default=None)
     ap.add_argument("--write-doc", action="store_true")
+    ap.add_argument("--gate-scenario", default="S1b-issuance-redemption-timing-only",
+                    help="schedule-gate only: scenario to audit (a positive control can audit S1)")
+    ap.add_argument("--compare", default=None,
+                    help="prior evaluation directory whose S1 timing summary is shown next to "
+                         "this batch's (e.g. results/d1-pilot/<b4 batch>/evaluation-a1)")
     ap.add_argument("--doc", choices=sorted(DOCS), default="pilot",
                     help="which results document receives the generated section")
     args = ap.parse_args(argv)
@@ -210,11 +232,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps({k: v for k, v in res.items() if k != "findings"}),
               *res["findings"][:50], sep="\n")
         return 0 if res["ok"] else 1
+    if args.command == "schedule-gate":
+        _, runs = _runs(root, args.batch)
+        res = schedule_gate.write_gate(root, args.batch, runs, args.gate_scenario)
+        for row in res["pairs"]:
+            print(f"{row['baseline_id']:16s} {row['pair']:22s} intended={row['intended']!s:5s} "
+                  f"match={row['rank_match_rate']:.3f} (chance {row['chance_rank_match_rate']:.3f}) "
+                  f"z_match={row['rank_match_z']:+.2f} z_rho={row['spearman_z']:+.2f} "
+                  f"identical={row['runs_with_identical_orders']}")
+        print("SCHEDULER GATE", "PASSED" if res["ok"] else "REJECTED",
+              json.dumps({"rejected": [r["baseline_id"] + ":" + r["pair"] for r in res["rejected_pairs"]],
+                          "public_order_mismatches": len(res["public_order_mismatches"])}))
+        return 0 if res["ok"] else 1
     if args.command == "export-training-labels":
         summary = export_training_labels(root, args.batch)
         print(f"exported training labels for {len(summary)} folds")
         return 0
-    return cmd_score(root, args.batch, args.round, args.write_doc, args.doc)
+    return cmd_score(root, args.batch, args.round, args.write_doc, args.doc, args.compare)
 
 
 if __name__ == "__main__":

@@ -25,7 +25,8 @@ import json
 from collections import defaultdict
 from typing import Any, Dict, List, Mapping
 
-SLUG = {"S0-clean-shuffled": "S0", "S1-correlated-timing": "S1"}
+SLUG = {"S0-clean-shuffled": "S0", "S1-correlated-timing": "S1",
+        "S1b-issuance-redemption-timing-only": "S1b"}
 
 
 def build_splits(dataset_manifest: Mapping[str, Any]) -> Dict[str, Any]:

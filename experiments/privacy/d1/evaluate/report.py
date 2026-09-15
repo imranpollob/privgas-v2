@@ -14,7 +14,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
-SCEN = {"S0-clean-shuffled": "S0", "S1-correlated-timing": "S1"}
+SCEN = {"S0-clean-shuffled": "S0", "S1-correlated-timing": "S1",
+        "S1b-issuance-redemption-timing-only": "S1b"}
 
 
 def write_csv(path: Path, rows: Sequence[Mapping[str, Any]], columns: Optional[List[str]] = None
@@ -80,8 +81,12 @@ def plots(out_dir: Path, rules_by_n: List[Dict[str, Any]], learned: List[Dict[st
                      ("B4-CrossAccount", "r2_timing_rules_s0_vs_s1_b4.png")):
         if not any(r["relation"] == "R2" and r["baseline_id"] == b for r in rules_by_n):
             continue
-        fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
-        for ax, scen in zip(axes, ("S0-clean-shuffled", "S1-correlated-timing")):
+        scens = [sc for sc in SCEN if any(r["scenario_id"] == sc and r["baseline_id"] == b
+                                          for r in rules_by_n)]
+        fig, axes = plt.subplots(1, len(scens), figsize=(5 * len(scens), 3.8), sharey=True,
+                                 squeeze=False)
+        axes = list(axes[0])
+        for ax, scen in zip(axes, scens):
             for a in attacks:
                 pts = sorted((r["pool_size"], r["rule_top1"]) for r in rules_by_n
                              if r["relation"] == "R2" and r["baseline_id"] == b
@@ -94,7 +99,7 @@ def plots(out_dir: Path, rules_by_n: List[Dict[str, Any]], learned: List[Dict[st
             ax.set_xlabel("pool size N")
             ax.grid(alpha=0.3)
         axes[0].set_ylabel("top-1 success")
-        axes[1].legend(fontsize=7)
+        axes[-1].legend(fontsize=7)
         fig.tight_layout()
         p = out_dir / fname
         fig.savefig(p, dpi=150)

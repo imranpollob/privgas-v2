@@ -121,7 +121,10 @@ def harness_audit(root: Path, runs: List[Mapping[str, Any]]) -> Dict[str, Any]:
                "mean_rho": mean_rho, "z": z}
         combined.append(row)
         is_slot = pair.startswith("slot~")
-        if abs(z) > Z_STOP and (is_slot or s == "S0-clean-shuffled"):
+        # S0: every phase pair must be independent; S1b: every pair except the one intended
+        # correlation (issuance ~ redemption). S1 correlates all workflow phases by design.
+        s1b_flag = (s == "S1b-issuance-redemption-timing-only" and pair != "issue~act")
+        if abs(z) > Z_STOP and (is_slot or s == "S0-clean-shuffled" or s1b_flag):
             flags.append(row)
     return {"public_order_equals_private_schedule": not mismatches, "mismatches": mismatches,
             "combined": combined, "stop_flags": flags, "per_run": per_run,

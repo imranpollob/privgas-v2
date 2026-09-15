@@ -16,6 +16,7 @@ and the account-separation evidence of every B4 run (from its private run record
 
 from __future__ import annotations
 
+import json
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -27,7 +28,8 @@ from .labels_io import private_run
 
 B3 = "B3-PrivGas-v1"
 B4 = "B4-CrossAccount"
-SCEN = {"S0-clean-shuffled": "S0", "S1-correlated-timing": "S1"}
+SCEN = {"S0-clean-shuffled": "S0", "S1-correlated-timing": "S1",
+        "S1b-issuance-redemption-timing-only": "S1b"}
 
 #: (label, selector, metric). selector: ("rule", attack) or ("learned", feature_set).
 #: Learned models: leave-one-replicate-out, primary registry convention.
@@ -240,4 +242,75 @@ def markdown(ctx: Mapping[str, Any], md_table) -> str:
                        for x in sorted(sep["runs"], key=lambda x: (x["scenario_id"],
                                                                    x["pool_size"], x["run_id"]))]))
     s.append(f"\nAll B4 runs pass the separation audit: **{sep['ok']}**.")
+    return "\n".join(s) + "\n"
+
+
+# --------------------------------------------------------------------------------------
+# Timing summary, and comparison with a prior batch's scenario (S1 vs S1b)
+# --------------------------------------------------------------------------------------
+
+def timing_summary(rules: Sequence[Mapping[str, Any]], learned: Sequence[Mapping[str, Any]],
+                   deltas: Sequence[Mapping[str, Any]], source: str,
+                   scenarios: Sequence[str]) -> List[Dict[str, Any]]:
+    """One row per (baseline, scenario): the registered timing attacks and the gas/proof
+    negative control, pooled over N (leave-one-replicate-out, primary convention)."""
+    out = []
+    keys = sorted({(r["baseline_id"], r["scenario_id"]) for r in learned
+                   if r["relation"] == "R2" and r["scenario_id"] in scenarios})
+    for b, s in keys:
+        def rule(a):
+            return next((r for r in rules if r["relation"] == "R2" and r["baseline_id"] == b
+                         and r["scenario_id"] == s and r["attack"] == a), {})
+
+        def model(fs):
+            return next((r for r in learned if r["relation"] == "R2" and r["baseline_id"] == b
+                         and r["scenario_id"] == s and r["fold_kind"] == "loro"
+                         and r["convention"] == "primary" and r["feature_set"] == fs), {})
+
+        def delta(to):
+            return next((d for d in deltas if d["relation"] == "R2" and d["baseline_id"] == b
+                         and d["scenario_id"] == s and d["fold_kind"] == "loro"
+                         and d["convention"] == "primary" and d["from"] == "none"
+                         and d["to"] == to), {})
+        fifo, win, tm, gp = (rule("rule.r2-insertion-order-fifo"), rule("rule.r2-window-k2"),
+                             model("T+G-minus-eq"), model("G-minus-eq-minus-timing"))
+        dt, dg = delta("T+G-minus-eq"), delta("G-minus-eq-minus-timing")
+        out.append({"source": source, "baseline_id": b, "scenario_id": s,
+                    "chance_top1": tm.get("chance_top1"), "chance_bits": tm.get("chance_bits"),
+                    "fifo_top1": fifo.get("rule_top1"), "fifo_top1_ci": (fifo.get("rule_top1_ci_lo"), fifo.get("rule_top1_ci_hi")),
+                    "window_k2_precision": win.get("precision"), "window_k2_coverage": win.get("coverage"),
+                    "window_k2_precision_ci": (win.get("precision_ci_lo"), win.get("precision_ci_hi")),
+                    "timing_top1": tm.get("top1"), "timing_top1_ci": (tm.get("top1_ci_lo"), tm.get("top1_ci_hi")),
+                    "timing_top3": tm.get("top3"), "timing_top5": tm.get("top5"),
+                    "timing_ce_bits": tm.get("ce_bits"), "timing_ce_ci": (tm.get("ce_bits_ci_lo"), tm.get("ce_bits_ci_hi")),
+                    "timing_delta_bits": dt.get("delta_bits"), "timing_delta_ci": (dt.get("delta_ci_lo"), dt.get("delta_ci_hi")),
+                    "gasproof_top1": gp.get("top1"), "gasproof_ce_bits": gp.get("ce_bits"),
+                    "gasproof_delta_bits": dg.get("delta_bits"), "gasproof_delta_ci": (dg.get("delta_ci_lo"), dg.get("delta_ci_hi"))})
+    return out
+
+
+def load_prior(prior_eval_dir: Path, scenarios: Sequence[str]) -> List[Dict[str, Any]]:
+    d = Path(prior_eval_dir)
+    return timing_summary(json.loads((d / "rules.json").read_text()),
+                          json.loads((d / "learned.json").read_text()),
+                          json.loads((d / "delta_bits.json").read_text()),
+                          f"prior batch {d.parent.name}", scenarios)
+
+
+def timing_markdown(rows: Sequence[Mapping[str, Any]], md_table) -> str:
+    def ci(v, c):
+        return f"{_f(v)} [{_f(c[0])}, {_f(c[1])}]"
+    s = ["\n#### R2 timing summary and gas/proof negative control (pooled over N; "
+         "leave-one-replicate-out, primary convention; 95% CIs)\n"]
+    s.append(md_table(
+        ["source", "baseline", "scen.", "chance top-1", "FIFO top-1", "window k=2 precision",
+         "window k=2 coverage", "timing model T+G-minus-eq top-1", "top-3", "top-5",
+         "CE bits (chance)", "timing delta_bits", "gas/proof-only delta_bits"],
+        [[r["source"], r["baseline_id"], SCEN.get(r["scenario_id"], r["scenario_id"]),
+          _f(r["chance_top1"]), ci(r["fifo_top1"], r["fifo_top1_ci"]),
+          ci(r["window_k2_precision"], r["window_k2_precision_ci"]), _f(r["window_k2_coverage"]),
+          ci(r["timing_top1"], r["timing_top1_ci"]), _f(r["timing_top3"]), _f(r["timing_top5"]),
+          f"{ci(r['timing_ce_bits'], r['timing_ce_ci'])} ({_f(r['chance_bits'])})",
+          ci(r["timing_delta_bits"], r["timing_delta_ci"]),
+          ci(r["gasproof_delta_bits"], r["gasproof_delta_ci"])] for r in rows]))
     return "\n".join(s) + "\n"

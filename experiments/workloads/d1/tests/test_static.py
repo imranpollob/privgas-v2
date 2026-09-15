@@ -8,11 +8,13 @@ import unittest
 from experiments.workloads.d1.actors import make_actors, sponsor_handle
 from experiments.workloads.d1.config import (experiment_id, load_pilot_config,
                                              parse_experiment_id)
-from experiments.workloads.d1.schedule import (SCENARIOS, check_constraints, make_schedule,
+from experiments.workloads.d1.schedule import (SCENARIOS as ALL_SCENARIOS, check_constraints, make_schedule,
                                                observed_orders, phases_for, spearman)
 from experiments.recorder.fieldtypes import RE_EXPERIMENT_ID, RE_OPAQUE_ID
 
 B3 = "B3-PrivGas-v1"
+#: the pilot's scenarios; S1b (credit baselines only) is tested in test_s1b_static.py
+SCENARIOS = ALL_SCENARIOS[:2]
 BASELINES = ("B0", "B1", "B2-Signature", "B2-Allowlist", B3)
 
 

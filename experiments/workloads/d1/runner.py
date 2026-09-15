@@ -85,7 +85,7 @@ from ..w1.userop import (UserOp, counterfactual_address, ep_deposit, ep_nonce, i
                          get_userop_hash, sign_paymaster, sign_userop)
 from .actors import Actor, make_actors
 from .config import PilotConfig, load_pilot_config
-from .schedule import Schedule, make_schedule
+from .schedule import S1B, Schedule, make_schedule, s1b_unintended_exposure
 
 BASELINES = ("B0", "B1", "B2-Signature", "B2-Allowlist", B3_BASELINE_ID, B4_CROSS_ACCOUNT_ID)
 DUMP_VERSION = "d1-1"
@@ -190,6 +190,13 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
             schedule = make_schedule(spec.seed, spec.pool_size, spec.scenario_id,
                                      spec.baseline_id, sched_params,
                                      start_time=workflow_start + int(sched_params["phase_gap"]))
+            if spec.scenario_id == S1B:
+                # Reject before any workflow transaction if an order other than issuance ~
+                # redemption deterministically exposes the pairing (identical orders).
+                exposure = s1b_unintended_exposure(schedule)
+                check("s1b_no_unintended_order_equals_another",
+                      all(v < 1.0 for v in exposure.values()),
+                      {k: v for k, v in exposure.items() if v >= 1.0})
             f = faucet()
             treasury = keys.account("asset_sender")  # W1 token holder; not an actor
             sender_eth = int(pilot.raw["actor_setup"]["asset_sender_eth"])

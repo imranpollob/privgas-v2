@@ -14,10 +14,14 @@ CONFIG_RELPATH = Path("experiments") / "workloads" / "d1" / "pilot-config.json"
 #: with pilot-config.json must be identical (tested); it adds only the variant list and
 #: the ``b4`` section.
 B4_CONFIG_RELPATH = Path("experiments") / "workloads" / "d1" / "b4-config.json"
+#: Final D1 timing sanity experiment (docs/d1-s1b-results.md): b4-config.json plus the S1b
+#: scenario parameters; variants B3 / B4-CrossAccount x S1b, N = 8, 16, 32.
+S1B_CONFIG_RELPATH = Path("experiments") / "workloads" / "d1" / "s1b-config.json"
 EXPERIMENT_PREFIX = "d1-pilot"
 
 SCENARIO_SLUG = {"S0-clean-shuffled": "s0-clean-shuffled",
-                 "S1-correlated-timing": "s1-correlated-timing"}
+                 "S1-correlated-timing": "s1-correlated-timing",
+                 "S1b-issuance-redemption-timing-only": "s1b-issuance-redemption-timing-only"}
 BASELINE_SLUG = {"B0": "b0", "B1": "b1", "B2-Signature": "b2-signature",
                  "B2-Allowlist": "b2-allowlist", "B3-PrivGas-v1": "b3-privgas-v1",
                  "B4-CrossAccount": "b4-crossaccount"}

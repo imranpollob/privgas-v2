@@ -37,7 +37,10 @@ from ...recorder import paths as paths_mod
 from ...recorder.provenance import environment_report, repo_root, software_revision
 from ..w1 import b3
 from ..w1.artifacts import forge_build
-from .config import B4_CONFIG_RELPATH, CONFIG_RELPATH, experiment_id, load_pilot_config
+from .config import (B4_CONFIG_RELPATH, CONFIG_RELPATH, S1B_CONFIG_RELPATH, experiment_id,
+                     load_pilot_config)
+
+CONFIGS = {"pilot": CONFIG_RELPATH, "b4": B4_CONFIG_RELPATH, "s1b": S1B_CONFIG_RELPATH}
 from .recording import record_pilot_run, write_raw
 from .runner import PilotRunFailure, RunSpec, run_pilot
 
@@ -64,9 +67,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="where data/ and results/ are written (default: --root); code, "
                          "contracts, calibration and prover artifacts always come from --root")
     ap.add_argument("--no-build", action="store_true")
-    ap.add_argument("--config", choices=("pilot", "b4"), default="pilot",
+    ap.add_argument("--config", choices=sorted(CONFIGS), default="pilot",
                     help="pilot: experiments/workloads/d1/pilot-config.json; b4: the B3 vs "
-                         "B4-CrossAccount ablation, experiments/workloads/d1/b4-config.json")
+                         "B4-CrossAccount ablation, experiments/workloads/d1/b4-config.json; "
+                         "s1b: the final timing sanity experiment, s1b-config.json")
     ap.add_argument("--batch", default=None, help="batch timestamp (default: now)")
     args = ap.parse_args(argv)
     root = Path(args.root) if args.root else repo_root()
@@ -76,7 +80,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if "data/private" not in str(seed_path.resolve()):
             ap.error("--master-seed-file must lie under data/private/")
         args.master_seed = int(seed_path.read_text().strip())
-    pilot = load_pilot_config(root, B4_CONFIG_RELPATH if args.config == "b4" else CONFIG_RELPATH)
+    pilot = load_pilot_config(root, CONFIGS[args.config])
     pool_sizes = args.pool_size or pilot.pool_sizes
     replicates = args.replicates or pilot.replicates
     variants = ([tuple(v.split(":", 1)) for v in args.variant] if args.variant
@@ -127,7 +131,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     manifest = {
         "note": "D1 pilot dataset manifest. Public: experimental conditions and run ids only. "
                 "Seeds, actor tables, schedules and failure tracebacks are private.",
-        "config_file": str(B4_CONFIG_RELPATH if args.config == "b4" else CONFIG_RELPATH),
+        "config_file": str(CONFIGS[args.config]),
         "batch": batch, "pilot_config": pilot.raw, "software_revision": revision,
         "pool_sizes": pool_sizes, "replicates": replicates,
         "variants": [list(v) for v in variants], "runs": public_runs,
