@@ -14,13 +14,15 @@ forbidden from populating.
 Available: B0 (sender-funded EOA), B1 (sender-funded smart account),
 B2-Allowlist (auxiliary public-allowlist Paymaster) and B2-Signature
 (signature-verifying Paymaster) and B3-PrivGas-v1 (the frozen PrivGas v1
-specimen; adapter ``b3_privgas_v1``). B4/B5 are out of scope.
+specimen; adapter ``b3_privgas_v1``) and B4-CrossAccount (its cross-account ablation;
+adapter ``b4_cross_account``). The reserved B4/B5 prototypes are out of scope.
 """
 
 from .b0_sender_eoa import B0Adapter  # noqa: F401
 from .b1_sender_aa import B1Adapter  # noqa: F401
 from .b2_public_paymaster import B2AllowlistAdapter, B2SignatureAdapter  # noqa: F401
 from .b3_privgas_v1 import B3PrivGasV1Adapter  # noqa: F401
+from .b4_cross_account import B4CrossAccountAdapter  # noqa: F401
 from .base import (  # noqa: F401
     BaselineAdapter,
     BundlerObservation,
@@ -34,7 +36,7 @@ __all__ = [
     "BaselineAdapter", "Observation", "UserOpObservation",
     "BundlerObservation", "GroundTruth", "RelationLabel",
     "B0Adapter", "B1Adapter", "B2AllowlistAdapter", "B2SignatureAdapter",
-    "B3PrivGasV1Adapter", "ADAPTERS", "for_baseline",
+    "B3PrivGasV1Adapter", "B4CrossAccountAdapter", "ADAPTERS", "for_baseline",
 ]
 
 ADAPTERS = {
@@ -43,6 +45,7 @@ ADAPTERS = {
     "B2-Allowlist": B2AllowlistAdapter,
     "B2-Signature": B2SignatureAdapter,
     "B3-PrivGas-v1": B3PrivGasV1Adapter,
+    "B4-CrossAccount": B4CrossAccountAdapter,
 }
 
 

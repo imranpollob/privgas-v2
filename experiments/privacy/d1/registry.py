@@ -222,11 +222,12 @@ def _build() -> Dict[Tuple[str, str], FieldClass]:
                        "not separable from public data")
             elif f == "nonce" and rk_app == "uoe@app":
                 fam, why = "G", ("counterfactual: the B3 Spend uses nonce 1 because the "
-                                 "Bootstrap consumed nonce 0 (B1/B2: nonce 0)")
+                                 "Bootstrap consumed nonce 0 (B1/B2 and the B4-CrossAccount "
+                                 "Spend: nonce 0)")
                 amb = "AA-shaped field whose value is set by the gas mechanism"
             elif f == "factory" and rk_app in ("uoe@app", "deploy_log@app"):
-                fam, why = "G", ("counterfactual: B1/B2 deploy the account in the application "
-                                 "op, B3 in the Bootstrap op")
+                fam, why = "G", ("counterfactual: B1/B2 and B4-CrossAccount deploy the account in "
+                                 "the application op, B3 in the Bootstrap op")
                 amb = "account deployment is AA; its placement is caused by the gas mechanism"
             elif f in ("target", "asset_contract", "asset_amount") and rk_app == "uoe@app":
                 fam, why, amb = "T", "the application call target (token)", None
@@ -275,7 +276,8 @@ class Feature:
     subfamily: str
     sources: Tuple[Tuple[str, str], ...]   # (row_kind, field); ("AUX", ...) for auxiliary
     description: str
-    baselines: Tuple[str, ...] = ("B0", "B1", "B2-Signature", "B2-Allowlist", "B3-PrivGas-v1")
+    baselines: Tuple[str, ...] = ("B0", "B1", "B2-Signature", "B2-Allowlist", "B3-PrivGas-v1",
+                                  "B4-CrossAccount")
 
     def families(self, convention: str = "primary") -> FrozenSet[str]:
         fams = {field_family(rk, f, convention) for rk, f in self.sources}
@@ -287,8 +289,11 @@ class Feature:
 
 
 B0B1 = ("B0", "B1")
-AA_B = ("B1", "B2-Signature", "B2-Allowlist", "B3-PrivGas-v1")
+AA_B = ("B1", "B2-Signature", "B2-Allowlist", "B3-PrivGas-v1", "B4-CrossAccount")
 B3_ = ("B3-PrivGas-v1",)
+#: Baselines running the frozen credit contracts. B4-CrossAccount reuses every B3 R2
+#: feature unchanged (docs/d1-b4-results.md); none was added for it.
+CREDIT_ = ("B3-PrivGas-v1", "B4-CrossAccount")
 
 FEATURES: Tuple[Feature, ...] = (
     # ---------------- R1: economic funder <-> operation (B0, B1 only) ----------------
@@ -341,62 +346,62 @@ FEATURES: Tuple[Feature, ...] = (
             "|rank of the candidate's token transfer - rank of the application op| / (N-1)",
             ("B1",)),
 
-    # ---------------- R2: issuance <-> redemption (B3 only) ---------------------------
+    # ---------------- R2: issuance <-> redemption (B3, B4-CrossAccount) ---------------------------
     Feature("r2_eq_g_account", "R2", "eq",
             (("pool_redeem_log", "sender"), ("pool_deposit_log", "sender")),
             "CreditSpent(nullifier, sender) names the same account as the issuance's "
-            "CreditPool depositor", B3_),
+            "CreditPool depositor", CREDIT_),
     Feature("r2_eq_aa_sender", "R2", "eq",
             (("uoe@app", "sender"), ("uoe@bootstrap", "sender")),
-            "Spend UserOperation.sender == Bootstrap UserOperation.sender", B3_),
+            "Spend UserOperation.sender == Bootstrap UserOperation.sender", CREDIT_),
     Feature("r2_eq_t_account", "R2", "eq",
             (("erc20_in_op", "sender"), ("pool_deposit_log", "sender")),
             "the account whose application transfer the Spend made == the issuance's depositor",
-            B3_),
+            CREDIT_),
     Feature("r2_eq_deploy", "R2", "eq",
             (("uoe@app", "sender"), ("deploy_log@bootstrap", "sender")),
-            "Spend sender == account deployed by the issuance operation", B3_),
+            "Spend sender == account deployed by the issuance operation", CREDIT_),
     Feature("r2_rank_gap_g", "R2", "timing",
             (("pool_redeem_log", "block_number"), ("pool_deposit_log", "block_number")),
             "|rank of the redemption among redemptions - rank of the issuance among issuances| "
-            "/ (N-1)  (insertion-order / FIFO signal)", B3_),
+            "/ (N-1)  (insertion-order / FIFO signal)", CREDIT_),
     Feature("r2_rank_gap_aa", "R2", "timing",
             (("uoe@app", "block_number"), ("uoe@bootstrap", "block_number")),
-            "same rank gap read from the UserOperationEvent rows", B3_),
+            "same rank gap read from the UserOperationEvent rows", CREDIT_),
     Feature("r2_dt_offset_g", "R2", "timing",
             (("pool_redeem_log", "block_timestamp_utc"), ("pool_deposit_log", "block_timestamp_utc")),
             "|(t_redeem - t_issue) - (median t_redeem - median t_issue)| / (run span), an "
-            "unsupervised common-delay window", B3_),
+            "unsupervised common-delay window", CREDIT_),
     Feature("r2_latest_issuance_g", "R2", "timing",
             (("pool_redeem_log", "block_number"), ("pool_deposit_log", "block_number")),
-            "candidate is the most recent issuance before the redemption (nearest prior)", B3_),
+            "candidate is the most recent issuance before the redemption (nearest prior)", CREDIT_),
     Feature("r2_intervening_g", "R2", "timing",
             (("pool_redeem_log", "block_number"), ("pool_deposit_log", "block_number")),
             "number of issuances between the candidate and the redemption / N (root age proxy)",
-            B3_),
+            CREDIT_),
     Feature("r2_root_match", "R2", "pm",
             (("pool_redeem_log", "merkle_root"), ("pool_deposit_log", "merkle_root")),
-            "the redemption proved against the root emitted by the candidate's deposit", B3_),
+            "the redemption proved against the root emitted by the candidate's deposit", CREDIT_),
     Feature("r2_bits_agree", "R2", "pm",
             (("pool_redeem_log", "nullifier"), ("pool_deposit_log", "commitment")),
             "fraction of equal bits in the low 64 bits of nullifier and commitment "
-            "(cryptographic negative control)", B3_),
+            "(cryptographic negative control)", CREDIT_),
     Feature("r2_gas_rank_gap", "R2", "gas",
             (("uoe@app", "actual_gas_used"), ("uoe@bootstrap", "actual_gas_used")),
-            "|rank of Spend gas used - rank of Bootstrap gas used| / (N-1)", B3_),
+            "|rank of Spend gas used - rank of Bootstrap gas used| / (N-1)", CREDIT_),
     Feature("r2_pvg_gap", "R2", "gas",
             (("uoe@app", "pre_verification_gas"), ("uoe@bootstrap", "pre_verification_gas")),
-            "|z(Spend PVG) - z(Bootstrap PVG)| (within-run z-scores)", B3_),
+            "|z(Spend PVG) - z(Bootstrap PVG)| (within-run z-scores)", CREDIT_),
     Feature("r2_cand_gas_z", "R2", "gas", (("uoe@bootstrap", "actual_gas_used"),),
             "within-run z-score of the Bootstrap op's gas used (insertion-position dependent)",
-            B3_),
+            CREDIT_),
     Feature("r2_cand_pvg_z", "R2", "gas", (("uoe@bootstrap", "pre_verification_gas"),),
-            "within-run z-score of the Bootstrap op's PVG (calldata zero bytes)", B3_),
+            "within-run z-score of the Bootstrap op's PVG (calldata zero bytes)", CREDIT_),
     Feature("r2_delivery_rank_gap_tg", "R2", "timing",
             (("erc20_tx", "block_number"), ("erc20_tx", "subject_account"),
              ("pool_deposit_log", "sender"), ("erc20_in_op", "block_number")),
             "|rank of token delivery to the candidate's depositor - rank of the Spend's "
-            "application transfer| / (N-1)", B3_),
+            "application transfer| / (N-1)", CREDIT_),
 
     # ---------------- R3: stealth account <-> established wallet (negative control) --------
     Feature("r3_dir_vs_action_rank_t", "R3", "timing",
@@ -430,7 +435,8 @@ FEATURES: Tuple[Feature, ...] = (
     Feature("r3_dir_vs_issuance_rank_g", "R3", "timing",
             (("AUX", "directory_position"), ("pool_deposit_log", "block_number"),
              ("pool_deposit_log", "sender"), ("pool_redeem_log", "sender")),
-            "|directory position - rank of the spender's issuance| / (N-1)", B3_),
+            "|directory position - rank of the spender's issuance| / (N-1). B3 only: it is "
+            "defined through spender == depositor, which does not exist in B4-CrossAccount", B3_),
     Feature("r3_addr_hamming_t", "R3", "eq",
             (("AUX", "wallet_address"), ("erc20_tx", "sender"), ("erc20_in_op", "sender")),
             "normalised Hamming distance between the bits of the account that makes the "

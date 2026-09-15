@@ -545,3 +545,31 @@ class TestB3PrivGasV1Schema(RejectionTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- schema 5.1.0: the B4-CrossAccount ablation ------------------------------
+
+
+class TestB4CrossAccountSchema(RejectionTestCase):
+    B4 = "B4-CrossAccount"
+
+    def test_b4_rows_validate_under_5_1_0(self):
+        validate_record("public_events", F.public_event(baseline_id=self.B4))
+        validate_record("ground_truth", F.ground_truth(self.B4))
+
+    def test_b4_id_is_rejected_in_a_5_0_0_row(self):
+        for stream, row in (("public_events", F.public_event(baseline_id=self.B4)),
+                            ("ground_truth", F.ground_truth(self.B4))):
+            with self.subTest(stream=stream):
+                row["schema_version"] = "5.0.0"
+                self.assertRejected(stream, row, code="unknown_baseline")
+
+    def test_5_0_0_rows_of_earlier_baselines_stay_readable(self):
+        row = F.ground_truth("B3-PrivGas-v1")
+        row["schema_version"] = "5.0.0"
+        validate_record("ground_truth", row)
+
+    def test_b4_has_the_credit_system_and_keeps_r2_rules(self):
+        row = F.ground_truth(self.B4)
+        row["public_anchors"]["credit_nullifier"] = None
+        self.assertRejected("ground_truth", row, code="label_inconsistent")

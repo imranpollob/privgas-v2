@@ -36,6 +36,9 @@ Rules:
 
 from __future__ import annotations
 
+#: 5.1.0 (2026-09-15): baseline_id gains "B4-CrossAccount" (the cross-account ablation of
+#: the frozen B3 specimen, docs/d1-b4-results.md). MINOR: a new enum member; 5.0.0 rows
+#: stay readable and a 5.0.0 row naming the new id is rejected.
 #: 5.0.0 (2026-09-14): the frozen B3 specimen becomes measurable. baseline_id
 #: "B3" renamed "B3-PrivGas-v1"; public_events gains event types
 #: stealth_announcement / sponsorship_eligibility and calldata classes
@@ -60,10 +63,10 @@ from __future__ import annotations
 #: MAJOR because a bundler_private field was removed/renamed and field tier
 #: semantics changed. 1.0.0 rows (synthetic fixtures only; no measured 1.0.0
 #: data ever existed) are not readable by this code.
-SCHEMA_VERSION = "5.0.0"
+SCHEMA_VERSION = "5.1.0"
 
 #: Versions this code can read and validate. Explicit allow-list on purpose.
-SUPPORTED_SCHEMA_VERSIONS = frozenset({"5.0.0"})
+SUPPORTED_SCHEMA_VERSIONS = frozenset({"5.0.0", "5.1.0"})
 
 STREAM_GROUND_TRUTH = "ground_truth"
 STREAM_PUBLIC_EVENTS = "public_events"

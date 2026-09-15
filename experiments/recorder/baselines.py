@@ -15,7 +15,9 @@ Status: B0, B1, B2-Allowlist and B2-Signature are implemented in ``baselines/w1_
 on 2026-09-14 -- the capability flags held; see docs/w1-baselines.md.
 B3-PrivGas-v1 is the frozen specimen ``baselines/b3_privgas_v1``, measured
 unmodified on the ``b3_compat_local`` evaluation profile (docs/b3-evaluation.md);
-its row was confirmed against those real runs (schema 5.0.0). B4-B6 rows still encode docs/research-plan.md Sec. 5, not an
+its row was confirmed against those real runs (schema 5.0.0). B4-CrossAccount (schema 5.1.0)
+is the cross-account ablation of that specimen (docs/d1-b4-results.md), confirmed against
+its own real runs. The reserved B4-B6 rows still encode docs/research-plan.md Sec. 5, not an
 implementation. If an implemented baseline turns out to differ, the fix is to
 update this table together with a docs/decision-log.md entry, not to relax
 the validator ad hoc.
@@ -92,6 +94,19 @@ _TABLE: Dict[str, BaselineCapabilities] = {
         "PoseidonT3 exceeds EIP-170; docs/b3-reproduction.md, docs/b3-evaluation.md).",
         implemented_in_repo=True,
     ),
+    # Schema 5.1.0: a causal ablation of B3, NOT the reserved B4 prototype below.
+    # The same frozen contracts and proofs as B3-PrivGas-v1; only the actor workflow
+    # differs: one public account issues (Bootstrap), a distinct account redeems
+    # (Spend). docs/d1-b4-results.md.
+    "B4-CrossAccount": BaselineCapabilities(
+        "B4-CrossAccount", True, True, True, True, True,
+        "Experimental counterfactual of the frozen PrivGas v1 specimen (same contracts, "
+        "same real Semaphore v4 / Groth16 proofs, b3_compat_local profile only): the "
+        "credit is issued by one public account (announceAndFund + BootstrapPaymaster-"
+        "sponsored CreditPool deposit) and redeemed through CreditPaymaster by a DIFFERENT "
+        "public account; the witness handoff is off chain. Not a protocol proposal.",
+        implemented_in_repo=True,
+    ),
     "B4": BaselineCapabilities(
         "B4", True, True, True, True, True,
         "Independently issued anonymous credit (issuance decoupled from the "
@@ -114,6 +129,10 @@ _TABLE: Dict[str, BaselineCapabilities] = {
 }
 
 BASELINE_IDS = tuple(sorted(_TABLE))
+
+#: Baseline ids that exist only from a given schema version on. A row naming one
+#: of them under an older version is rejected (the older schema did not define it).
+BASELINE_MIN_SCHEMA = {"B4-CrossAccount": "5.1.0"}
 
 #: Workloads and which baselines may run them. W1-warm is an AA-only
 #: ablation (the smart account is deployed before the measured action);

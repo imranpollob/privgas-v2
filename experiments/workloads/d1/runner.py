@@ -23,6 +23,24 @@ owned by the actor's recipient key elsewhere)::
     act      B0: acct_k: W1Token.transfer(destination, amount)
              B1/B2/B3: bundler handleOps([op_k]) -- the W1 application call
 
+B4-CrossAccount (``docs/d1-b4-results.md``) runs the same frozen contracts with two
+public accounts per actor: ``iss_k`` (a SimpleAccount owned by the independent issuer
+key) and ``acct_k`` (the spender, the same account B3 would use)::
+
+    setup    as above, plus faucet -> issuer_funder_k ETH (own shuffled order)
+    deliver  sender_k: W1Token.transfer(acct_k, amount)       -- the SPENDER gets the asset
+    fund     issuer_funder_k: announceAndFund{vMin + F}(1, iss_k, ephPub_k, "")
+    issue    iss_k: Bootstrap op (initCode(issuer key) + execute(CreditPool, deposit(C_k)))
+    prepare  off chain, private handoff: the spender's wallet holds identity_k and proves
+             against the FINAL root with message = acct_k's own userOpHash
+    act      acct_k: Spend op (initCode(recipient key): nothing deployed acct_k before;
+             the W1 application call; CreditPaymaster; nonce 0)
+
+The run FAILS (never records) unless, for every actor, the issuer and spender keys,
+accounts and funding wallets differ, the Bootstrap sender differs from the Spend
+sender, no transaction joins the issuer side and the spender side, the issuer never
+held the W1 asset, and the spender was never announced, eligible or a depositor.
+
 B3 single-final-root procedure (``docs/d1-pilot-results.md``): all N
 Bootstraps are included first (their insertion order is recorded privately);
 the harness then rebuilds ``Group(commitments in on-chain Deposited order)``
@@ -57,7 +75,8 @@ from ..w1.artifacts import dependency_tree_digest, load_all
 from ..w1.bundler import BUNDLER_ID, SIMULATION_METHOD, InstrumentedBundler
 from ..w1.chain import Chain, SentTx
 from ..w1.config import (ENTRYPOINT_SOURCE_COMMIT, ENTRYPOINT_SOURCE_REPO, ENTRYPOINT_VERSION,
-                         PAYMASTER_OF, B3_BASELINE_ID, load_config)
+                         PAYMASTER_OF, B3_BASELINE_ID, B4_CROSS_ACCOUNT_ID, CREDIT_BASELINE_IDS,
+                         load_config)
 from ..w1.keys import faucet, role_keys
 from ..w1.rpc import ANVIL_HARDFORK, AnvilProcess
 from ..w1.runner import (ZERO_ADDRESS, Environment, _application_call, _b3_provenance,
@@ -68,7 +87,7 @@ from .actors import Actor, make_actors
 from .config import PilotConfig, load_pilot_config
 from .schedule import Schedule, make_schedule
 
-BASELINES = ("B0", "B1", "B2-Signature", "B2-Allowlist", B3_BASELINE_ID)
+BASELINES = ("B0", "B1", "B2-Signature", "B2-Allowlist", B3_BASELINE_ID, B4_CROSS_ACCOUNT_ID)
 DUMP_VERSION = "d1-1"
 BUNDLER_NET_TOLERANCE_GAS = 100
 
@@ -126,7 +145,10 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
     b3cfg = b3.load_b3_config(root)
     keys = role_keys(spec.seed)
     actors = make_actors(spec.seed, spec.pool_size)
-    is_b3 = spec.baseline_id == B3_BASELINE_ID
+    # ``is_b3``: the frozen credit contracts are exercised (B3-PrivGas-v1 and its
+    # cross-account ablation); ``is_b4``: the issuer and the spender are distinct accounts.
+    is_b3 = spec.baseline_id in CREDIT_BASELINE_IDS
+    is_b4 = spec.baseline_id == B4_CROSS_ACCOUNT_ID
     aa = spec.baseline_id != "B0"
     sched_params = pilot.raw["schedule"]
     genesis = int(sched_params["genesis_timestamp"])
@@ -180,12 +202,33 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
                            to=env.token,
                            data=_token_transfer_data(a.asset_sender.address, cfg.transfer_amount),
                            gas=cfg.gas_limit("erc20_transfer"))
+            if is_b4:
+                for slot in schedule.orders["setup_issuer"]:
+                    chain.send(f, label=f"setup_fund_issuer_funder/{slot}", phase="setup",
+                               to=actors[slot].issuer_funder.address,
+                               value=pilot.issuer_funder_eth,
+                               gas=cfg.gas_limit("native_transfer"))
             rpc.call("anvil_removeBlockTimestampInterval")
             setup_end = chain.block_number()
 
             accounts = {a.slot: (a.recipient.address if not aa else counterfactual_address(
                 chain, env.factory, a.recipient.address, cfg.account_salt)) for a in actors}
             check("distinct_recipient_accounts", len(set(accounts.values())) == len(actors))
+            issuer_accounts: Dict[int, str] = {}
+            if is_b4:
+                issuer_accounts = {a.slot: counterfactual_address(
+                    chain, env.factory, a.issuer.address, cfg.account_salt) for a in actors}
+                for a in actors:
+                    check(f"b4_issuer_key_ne_spender_key/{a.slot}",
+                          a.issuer_key != a.recipient_key
+                          and a.issuer.address != a.recipient.address)
+                    check(f"b4_issuer_account_ne_spender_account/{a.slot}",
+                          issuer_accounts[a.slot] != accounts[a.slot])
+                    check(f"b4_issuer_funder_ne_asset_sender/{a.slot}",
+                          a.issuer_funder.address != a.asset_sender.address)
+                check("b4_issuer_and_spender_account_sets_disjoint",
+                      not set(issuer_accounts.values()) & set(accounts.values())
+                      and len(set(issuer_accounts.values())) == len(actors))
 
             clock = SimClock(workflow_start)
             bundler = (InstrumentedBundler(
@@ -254,13 +297,17 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
                 pm = env.paymaster_for(spec.baseline_id)
 
                 if is_b3:
+                    # B4: the spender account was never deployed (the issuer bootstrapped), so
+                    # its Spend deploys it, exactly like the B1/B2 application operation.
+                    spend_init = (init_code(env.factory, owner.address, cfg.account_salt)
+                                  if is_b4 else b"")
                     proofs: Dict[str, Any] = {}
                     members = [commitments[s] for s in insertion]
                     depth = final_group["depth"]
 
                     def build_b3(pvg: int) -> UserOp:
                         op = UserOp(
-                            sender=account, nonce=nonce, init_code=b"", call_data=call_data,
+                            sender=account, nonce=nonce, init_code=spend_init, call_data=call_data,
                             verification_gas_limit=cfg.verification_gas_limit,
                             call_gas_limit=cfg.call_gas_limit, pre_verification_gas=pvg,
                             max_priority_fee_per_gas=cfg.max_priority_fee,
@@ -310,8 +357,8 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
                 return build
 
             def bootstrap_builder(a: Actor):
-                account = accounts[a.slot]
-                owner = a.recipient
+                account = issuer_accounts[a.slot] if is_b4 else accounts[a.slot]
+                owner = a.issuer if is_b4 else a.recipient
                 call_data = b3.bootstrap_call_data(env.b3.credit_pool, commitments[a.slot])
 
                 def build(pvg: int) -> UserOp:
@@ -398,10 +445,12 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
                                          gas=cfg.gas_limit("setup_call")), f"fund/{ev.slot}")
                     elif is_b3:
                         ok_tx(chain.send(
-                            sender_of[ev.slot], label=f"fund/{ev.slot}", phase="workflow",
+                            a.issuer_funder if is_b4 else sender_of[ev.slot],
+                            label=f"fund/{ev.slot}", phase="workflow",
                             to=env.b3.registry, value=b3cfg.v_min + b3cfg.non_refundable_fee,
                             data=b3.announce_and_fund_calldata(
-                                b3cfg.scheme_id, acct, b3.ephemeral_public_key(a.ephemeral),
+                                b3cfg.scheme_id, issuer_accounts[ev.slot] if is_b4 else acct,
+                                b3.ephemeral_public_key(a.ephemeral),
                                 bytes.fromhex(b3cfg.raw["protocol"]["announcement_metadata_hex"][2:])),
                             gas=b3cfg.userop("announce_and_fund_gas_limit")), f"fund/{ev.slot}")
                 elif ev.phase == "issue":
@@ -461,6 +510,10 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
                     for n in nullifiers))
                 check("b3_root_unchanged_after_all_spends", b3.view_uint(
                     chain, env.b3.credit_paymaster, b3.SIG_CPM_MERKLE_ROOT) == final_group["root"])
+            separation: Dict[str, Any] = {}
+            if is_b4:
+                separation = b4_account_separation_checks(
+                    check, chain, env, actors, accounts, issuer_accounts, userops, op_labels)
             nets = []
             for st in chain.sent:
                 if tx_labels.get(st.hash, "").startswith("op-"):
@@ -554,6 +607,11 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
                     "stealth_handle": a.stealth_handle(spec.baseline_id),
                     "credit_handle": a.credit_handle, "issuance_handle": a.issuance_handle,
                     "commitment": str(commitments[a.slot]) if is_b3 else None,
+                    **({"issuer_key_address": a.issuer.address,
+                        "issuer_account": issuer_accounts[a.slot],
+                        "issuer_funder_address": a.issuer_funder.address,
+                        "issuer_handle": a.issuer_handle(),
+                        "credit_witness_holder": "spender_account"} if is_b4 else {}),
                     "eth_allowance": str(eth_allowance.get(a.slot, 0))}
                    for a in actors],
         "schedule": schedule.as_private_dict(),
@@ -566,9 +624,99 @@ def run_pilot(spec: RunSpec, root: Optional[Path] = None,
                 "leanimt_depth": final_group.get("leanimt_depth"),
                 "bootstrap_call_gas_limit": pilot.bootstrap_call_gas_limit,
                 "circuit": f"semaphore-{final_group.get('depth')}"} if is_b3 else None),
+        "b4": ({"handoff": "off chain, ground truth only: the credit witness of the identity "
+                           "committed by issuer_account is used by the wallet of recipient_account "
+                           "(the spender) of the same actor; no on-chain event",
+                "account_separation": separation} if is_b4 else None),
         "wallclock": wallclock,
         "checks": checks,
     }
     return PilotRunResult(spec=spec, chain_dump=chain_dump,
                           bundler_log=bundler.log if bundler else [], private=private,
                           checks=checks)
+
+
+def b4_account_separation_checks(check: Callable[..., None], chain: Chain, env: Environment,
+                                 actors: List[Actor], spenders: Mapping[int, str],
+                                 issuers: Mapping[int, str], userops: List[Dict[str, Any]],
+                                 op_labels: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+    """Hard account-separation gate of a B4-CrossAccount run (any failure fails the run).
+
+    Checked on what actually happened on chain, not on the intended configuration."""
+    low = lambda x: x.lower()  # noqa: E731
+    boot_sender: Dict[int, str] = {}
+    spend_sender: Dict[int, str] = {}
+    for u in userops:
+        meta = op_labels[u["label"]]
+        target = boot_sender if meta["stage"] == "bootstrap" else spend_sender
+        target[meta["slot"]] = low(u["packed"]["sender"])
+    for a in actors:
+        s = a.slot
+        check(f"b4_bootstrap_sender_is_issuer/{s}", boot_sender.get(s) == low(issuers[s]),
+              {"bootstrap_sender": boot_sender.get(s)})
+        check(f"b4_spend_sender_is_spender/{s}", spend_sender.get(s) == low(spenders[s]),
+              {"spend_sender": spend_sender.get(s)})
+        check(f"b4_bootstrap_sender_ne_spend_sender/{s}", boot_sender[s] != spend_sender[s])
+    check("b4_no_account_both_bootstraps_and_spends",
+          not set(boot_sender.values()) & set(spend_sender.values()))
+
+    # UserOperationEvent senders as mined (independent of the submitted packed ops)
+    mined = {"bootstrap": set(), "spend": set()}
+    for st in chain.sent:
+        logs = st.receipt["logs"]
+        is_boot = any((b3.decode_b3_log(l) or {}).get("event") == "CreditDeposited" for l in logs)
+        for l in logs:
+            d = abi.decode_log(l)
+            if d and d["event"] == "UserOperationEvent":
+                mined["bootstrap" if is_boot else "spend"].add(low(d["sender"]))
+    check("b4_mined_bootstrap_senders_are_the_issuers",
+          mined["bootstrap"] == {low(x) for x in issuers.values()})
+    check("b4_mined_spend_senders_are_the_spenders",
+          mined["spend"] == {low(x) for x in spenders.values()})
+    check("b4_mined_bootstrap_and_spend_senders_disjoint",
+          not mined["bootstrap"] & mined["spend"])
+
+    # No public transaction or value/asset edge between an actor's issuer side and spender side
+    issuer_side = {low(x) for a in actors for x in (a.issuer.address, a.issuer_funder.address,
+                                                     issuers[a.slot])}
+    spender_side = {low(x) for a in actors for x in (a.recipient.address, a.asset_sender.address,
+                                                      spenders[a.slot])}
+    check("b4_issuer_and_spender_sides_disjoint", not issuer_side & spender_side)
+    cross = []
+    token_to_issuer = []
+    for st in chain.sent:
+        frm, to = low(st.tx["from"]), low(st.tx.get("to") or "")
+        if (frm in issuer_side and to in spender_side) or (frm in spender_side and to in issuer_side):
+            cross.append(st.hash)
+        for l in st.receipt["logs"]:
+            d = abi.decode_log(l)
+            if d and d["event"] == "Transfer":
+                f_, t_ = low(d["from"]), low(d["to"])
+                if (f_ in issuer_side and t_ in spender_side) or (f_ in spender_side
+                                                                   and t_ in issuer_side):
+                    cross.append(st.hash)
+                if t_ in {low(x) for x in issuers.values()}:
+                    token_to_issuer.append(st.hash)
+            e = b3.decode_b3_log(l)
+            if e and e["event"] in ("Funded", "AnnounceCalled", "EligibilityMirrored"):
+                if low(e["stealth_address"]) in {low(x) for x in spenders.values()}:
+                    cross.append(st.hash)
+    check("b4_no_transaction_or_transfer_between_issuer_and_spender_sides", not cross, cross[:5])
+    check("b4_issuer_never_received_the_w1_asset", not token_to_issuer, token_to_issuer[:5])
+    for s, acct in spenders.items():
+        check(f"b4_spender_never_announced_or_bootstrapped/{s}", not any((
+            b3.view_uint(chain, env.b3.bootstrap_paymaster, b3.SIG_BPM_IS_ELIGIBLE,
+                         ("address",), (acct,)),
+            b3.view_uint(chain, env.b3.bootstrap_paymaster, b3.SIG_BPM_IS_USED,
+                         ("address",), (acct,)),
+            b3.view_uint(chain, env.b3.credit_pool, b3.SIG_POOL_HAS_DEPOSITED,
+                         ("address",), (acct,)))))
+    for s, acct in issuers.items():
+        check(f"b4_issuer_deposited/{s}", b3.view_uint(
+            chain, env.b3.credit_pool, b3.SIG_POOL_HAS_DEPOSITED, ("address",), (acct,)) == 1)
+        d = abi.call(abi.SIG_ERC20_BALANCE_OF, ["address"], [acct])
+        check(f"b4_issuer_holds_no_w1_asset/{s}", int(chain.eth_call(env.token, d), 16) == 0)
+    return {"bootstrap_senders": sorted(mined["bootstrap"]), "spend_senders": sorted(mined["spend"]),
+            "per_actor_bootstrap_ne_spend": all(boot_sender[a.slot] != spend_sender[a.slot]
+                                                for a in actors),
+            "cross_side_transactions": len(cross), "issuer_token_receipts": len(token_to_issuer)}

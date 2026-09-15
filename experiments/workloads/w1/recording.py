@@ -90,7 +90,8 @@ from ...recorder.adapters import (
 from ...recorder.provenance import environment_report, software_revision
 from ...recorder.writers import ExperimentRecorder
 from . import abi, b3
-from .config import B3_BASELINE_ID, ENTRYPOINT_VERSION, STANDARD_PROFILE, experiment_id
+from .config import (B3_BASELINE_ID, CREDIT_BASELINE_IDS, ENTRYPOINT_VERSION, STANDARD_PROFILE,
+                     experiment_id)
 from .keys import opaque_handle
 from .userop import unpack
 
@@ -566,10 +567,12 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
     aa = b != "B0"
     pm_name = chain_dump["paymaster_used"]
     paymaster = None
-    if b == B3_BASELINE_ID:
+    if b in CREDIT_BASELINE_IDS:
         paymaster = {
             "kind": "b3_privgas_v1_paymasters", "name": "BootstrapPaymaster+CreditPaymaster",
-            "baseline_role": "frozen PrivGas v1 specimen (unmodified)",
+            "baseline_role": ("frozen PrivGas v1 specimen (unmodified)" if b == B3_BASELINE_ID
+                              else "frozen PrivGas v1 contracts (unmodified), cross-account "
+                                   "actor workflow (experimental ablation)"),
             "authorization_rule": (
                 "Bootstrap: BootstrapPaymaster sponsors exactly one "
                 "execute(CreditPool, 0, deposit(uint256)) per announced (eligible) account; "
@@ -601,7 +604,7 @@ def _components(chain_dump: Dict[str, Any], private: Dict[str, Any]) -> Dict[str
                                   "the v0.9.0 PAYMASTER_SIG_MAGIC suffix; signed data "
                                   "abi.encode(uint48 validUntil, uint48 validAfter)",
             "verifying_signer": chain_dump["signature_paymaster_verifying_signer"]}
-    if paymaster is not None and b != B3_BASELINE_ID:
+    if paymaster is not None and b not in CREDIT_BASELINE_IDS:
         paymaster.update({
             "address": c[pm_name],
             "version": f"baselines/w1_b0_b2/src/{pm_name}.sol",

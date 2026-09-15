@@ -307,7 +307,9 @@ are in the generated tables below.
 ## 9. Unresolved questions
 
 - R2 under cross-account redemption (frozen source allows it; not a W1 action;
-  not run by instruction).
+  not run by instruction). **Addressed 2026-09-15 by the B4-CrossAccount ablation,
+  `docs/d1-b4-results.md`** (clean S0 at chance once accounts are decoupled; correlated
+  timing unchanged; Case A; kill condition still met).
 - R2 under root contention / realistic interleaving (D2 territory; not run).
 - Whether any ERC-4337-specific signal survives when T carries realistic
   variation (amounts, destinations, return-to-wallet behaviour).

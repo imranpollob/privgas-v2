@@ -13,7 +13,8 @@ R1 (B0, B1)  subject = application action (B0 action tx hash / B1 userop hash);
              (the faucet included). Not constructed for B2/B3: every sponsored
              operation there has one public candidate economic funder (see
              ``r1_structure``), so no classification is run.
-R2 (B3)      subject = Spend userop hash; candidates = every Bootstrap userop hash.
+R2 (B3, B4-CrossAccount)  subject = Spend userop hash; candidates = every Bootstrap
+             userop hash. B4-CrossAccount uses the identical extractor and features.
 R3 (all)     subject = application action; candidates = the auxiliary
              established-wallet directory (auxiliary attacker knowledge).
 
@@ -33,6 +34,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from . import registry
 
 B3 = "B3-PrivGas-v1"
+B4 = "B4-CrossAccount"
+CREDIT = (B3, B4)
 
 
 def _ts(s: Optional[str]) -> Optional[float]:
@@ -311,7 +314,7 @@ def _bits_agree(a_hex: str, b_hex: str) -> float:
 
 
 def r2_features(t: RunTrace) -> List[SubjectCandidates]:
-    if t.baseline_id != B3:
+    if t.baseline_id not in CREDIT:
         return []
     ops = app_ops(t)
     iss = issuances(t)
@@ -480,7 +483,7 @@ def r1_structure(t: RunTrace) -> Dict[str, Any]:
         for e in x["edge"]:
             edge_owner[e] += 1
     extra_bootstrap = None
-    if b == B3:
+    if b in CREDIT:
         boot_pm = {u.get("paymaster") for u in t.of("uoe@bootstrap")}
         extra_bootstrap = {"bootstrap_paymasters": len([p for p in boot_pm if p]),
                            "bootstrap_paymaster_depositors": len(

@@ -690,3 +690,70 @@ Format for each entry:
   never reach the attack process. A fixed L2 = 1 was tried first on a scratch batch and
   produced below-chance held-out CE for timing-only S0 models (overfitting); the inner-CV
   selection replaced it before any pilot result was produced.
+
+## 2026-09-15: B4-CrossAccount — a causal ablation of B3, not a protocol
+
+- **Decision**: add baseline id `B4-CrossAccount` (schema 5.1.0, MINOR: one new enum
+  member; 5.0.0 rows remain readable; a 5.0.0 row naming the new id is rejected). It runs
+  the unmodified frozen B3 contracts, real Semaphore v4 / Groth16 proofs and every B3
+  parameter on `b3_compat_local`; it differs from `B3-PrivGas-v1` only in the actor
+  workflow. The reserved `B4` of `docs/research-plan.md` §5 / Prompt 6 (a new binding
+  prototype) keeps its own id and is not implemented.
+- **Verified first** (live, frozen contracts): `CreditPaymaster.validatePaymasterUserOp`
+  checks maxCost, gas/fee caps, root, scope, `message == userOpHash`, nullifier and the
+  Groth16 proof; it never reads `userOp.sender` except to emit `CreditSpent`.
+  `CreditPool.deposit` requires only that `msg.sender` is eligible and has not deposited.
+  A Spend from an account that was never announced, eligible or a depositor succeeds with
+  a proof over its own userOpHash. No B3 change and no public handoff are needed.
+- **Workflow choices** (each is the minimal change that removes the issuer↔spender
+  coupling, recorded as a fairness difference):
+  1. Two new independent identity kinds per actor: `issuer` (owner key of the issuer
+     SimpleAccount) and `issuer_funder` (the wallet that pays the issuer's
+     `announceAndFund`). Existing identity draws are unchanged (keyed by kind name).
+  2. The spender is the account B3 would use (same recipient key), so B3 and B4 share the
+     Spend sender, asset sender, delivery and Semaphore identity at one (replicate, N).
+  3. The asset sender does NOT pay the admission (in B3 it does): otherwise one wallet
+     would publicly fund both sides, a deterministic issuer↔spender edge. The faucet funds
+     each issuer funder with the asset senders' ETH value in an independently permuted
+     setup order (`orders["setup_issuer"]`, in both scenarios).
+  4. The spender account was never deployed, so its Spend carries initCode (like B1/B2's
+     application op); the Spend nonce is 0 (B3: 1). Constant within a run.
+  5. The issuer account keeps the forwarded vMin (as B3's account does); it never holds
+     the W1 asset.
+  6. Schedules: identical streams and events to B3 (verified equal), so the comparison is
+     paired.
+  7. A run FAILS unless every per-actor and set-level separation check holds (keys,
+     accounts, funders distinct; mined Bootstrap senders ≠ Spend senders; no transaction or
+     token/ETH/announcement edge between the issuer side and the spender side; the issuer
+     never held W1T; the spender never announced/eligible/deposited).
+- **Alternatives considered**: asset sender funds the issuer's admission (rejected:
+  trivial public funding edge); a separate deployment op for the spender (rejected: needs a
+  gas payer, i.e. a new funding edge); an on-chain handoff (forbidden and unnecessary).
+
+## 2026-09-15: B4 analysis pre-registration (written before the B4 dataset was recorded)
+
+- **Matrix**: `experiments/workloads/d1/b4-config.json` — B3-PrivGas-v1 and
+  B4-CrossAccount × S0/S1 × N ∈ {4, 8, 16, 32} × 3 replicates = 48 runs, same secret master
+  seed as the pilot (so B3 is the pilot's B3 regenerated; integrity check: every
+  non-Spend transaction hash and every Spend's sender, nonce, callData, root and nullifier
+  equal the pilot's; Spend bundle bytes differ only through fresh Groth16 randomness).
+- **Attacks**: every pilot rule and learned configuration, unchanged, applied to B4 (R3
+  drops `r3_dir_vs_issuance_rank_g`, which is defined through spender == depositor). Added
+  before any B4 dataset run, for B3 and B4 alike: exact rules
+  `r2-announcer-eq-asset-sender`, `r2-shared-eth-funder`, `r2-shared-identifier-scan`
+  (Prompt §15 examples; merkle_root excluded from the scan because root equality is its own
+  rule), and learned selections `G-minus-eq-minus-timing` and
+  `T+AA+G-minus-eq-minus-timing` (R2 timing features are family G, so `G-minus-eq` alone
+  cannot isolate gas/proof metadata). A scratch end-to-end run (different seed, N = 4/8,
+  2 replicates) was used only to debug the pipeline; nothing was tuned on it.
+- **Operational criteria for the decision rule** (pooled over N, leave-one-replicate-out,
+  primary convention):
+  - *near chance (S0)*: the best exact rule's top-1 CI contains chance, and
+    delta_bits(none → T+AA+G-minus-eq) has a CI containing 0 or a point estimate below
+    0.1 × mean log2 N;
+  - *meaningfully linkable through timing (S1)*: delta_bits(none → T+G-minus-eq) CI
+    excludes 0 and its point estimate is ≥ 0.25 × mean log2 N, or a timing rule's top-1 CI
+    lies above chance by ≥ 0.1;
+  - *another public feature (Case B)*: any exact rule with precision CI above chance and
+    coverage > 0.1 in B4 S0, or `T+AA+G-minus-eq-minus-timing` / `G-minus-eq-minus-timing`
+    with delta_bits CI excluding 0 in B4 S0.

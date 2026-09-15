@@ -15,8 +15,10 @@ phase                 what happens                                           bas
 ``prepare``           OFF CHAIN: the wallet builds and signs the application all AA
                       operation (B3: generates the Semaphore proof)
 ``fund``              B0/B1: ETH to the recipient; B2-Allowlist:             not B2-Sig
-                      ``setSponsored``; B3: ``announceAndFund``
-``issue``             B3: Bootstrap operation (CreditPool deposit)            B3
+                      ``setSponsored``; B3: ``announceAndFund``; B4: the
+                      issuer funder's ``announceAndFund`` for the ISSUER
+``issue``             B3/B4: Bootstrap operation (CreditPool deposit; B4:     B3, B4
+                      sent by the issuer account)
 ``act``               the W1 application action                               all
 ====================  =====================================================  ============
 
@@ -30,6 +32,13 @@ S0-clean-shuffled
     every phase has its own independent uniformly random permutation and its
     own independent exponential gaps; phases are sequential, separated by
     ``phase_gap``. Nothing is a function of the slot or of another phase.
+
+B4-CrossAccount uses exactly B3's phases, streams and constraints (so B3 and B4 at
+one (seed, pool size, scenario) have IDENTICAL schedules: a paired comparison).
+Its only addition is ``orders["setup_issuer"]``, the order in which the faucet
+funds the issuer funders during setup, drawn from its own stream in both
+scenarios (never the arrival order): the issuer side and the spender side of an
+actor are joined by nothing in the scheduler except the private slot.
 
 S1-correlated-timing
     one random arrival order drives every phase (a natural "each user arrives,
@@ -53,6 +62,8 @@ SCENARIOS = ("S0-clean-shuffled", "S1-correlated-timing")
 PHASES = ("setup", "deliver", "prepare", "fund", "issue", "act")
 ONCHAIN_PHASES = ("deliver", "fund", "issue", "act")
 B3 = "B3-PrivGas-v1"
+B4 = "B4-CrossAccount"
+CREDIT = (B3, B4)
 
 
 def phases_for(baseline_id: str) -> Tuple[str, ...]:
@@ -62,7 +73,7 @@ def phases_for(baseline_id: str) -> Tuple[str, ...]:
         return ("setup", "deliver", "prepare", "act")
     if baseline_id in ("B1", "B2-Allowlist"):
         return ("setup", "deliver", "prepare", "fund", "act")
-    if baseline_id == B3:
+    if baseline_id in CREDIT:
         return ("setup", "deliver", "fund", "issue", "prepare", "act")
     raise ValueError(f"no D1 pilot schedule for baseline {baseline_id!r}")
 
@@ -187,7 +198,7 @@ def make_schedule(seed: int, pool_size: int, scenario_id: str, baseline_id: str,
             # Off chain; B1 prepares before funding, B3 after the last issuance.
             if baseline_id == "B1" or baseline_id == "B2-Allowlist":
                 t_prep = min(e.time for e in events if e.phase == "fund") - 1
-            elif baseline_id == B3:
+            elif baseline_id in CREDIT:
                 t_prep = max(e.time for e in events if e.phase == "issue") + 1
             else:
                 t_prep = min(e.time for e in events if e.phase == "act") - 1
@@ -200,12 +211,17 @@ def make_schedule(seed: int, pool_size: int, scenario_id: str, baseline_id: str,
         events = [e for e in events if e.phase != "prepare"]
         if baseline_id in ("B1", "B2-Allowlist"):
             anchor = min(e.time for e in events if e.phase == "fund") - 1
-        elif baseline_id == B3:
+        elif baseline_id in CREDIT:
             anchor = max(e.time for e in events if e.phase == "issue") + 1
         else:
             anchor = min(e.time for e in events if e.phase == "act") - 1
         for slot in orders["prepare"]:
             events.append(Event(anchor, "prepare", slot))
+
+    if baseline_id == B4:
+        # Setup only (not an event): the faucet's issuer-funder transfers, in an order of
+        # their own. Drawn last so every order B4 shares with B3 is untouched.
+        orders["setup_issuer"] = stream("order/setup_issuer").permutation(n)
 
     events = _serialize(events, orders)
     sched = Schedule(scenario_id=scenario_id, baseline_id=baseline_id, pool_size=n,
@@ -248,9 +264,11 @@ def check_constraints(s: Schedule) -> None:
             raise AssertionError("preparation after action")
         if s.baseline_id in ("B1", "B2-Allowlist") and pos[("prepare", slot)] > pos[("fund", slot)]:
             raise AssertionError("B1/B2-Allowlist preparation after funding")
-        if s.baseline_id == B3 and pos[("fund", slot)] > pos[("issue", slot)]:
+        if s.baseline_id in CREDIT and pos[("fund", slot)] > pos[("issue", slot)]:
             raise AssertionError("B3 issuance before admission")
-    if s.baseline_id == B3:
+    if s.baseline_id == B4 and sorted(s.orders.get("setup_issuer", [])) != list(range(s.pool_size)):
+        raise AssertionError("B4 issuer-funder setup order is not a permutation of the actors")
+    if s.baseline_id in CREDIT:
         last_issue = max(i for i, e in enumerate(s.events) if e.phase == "issue")
         first_after = min(i for i, e in enumerate(s.events) if e.phase in ("prepare", "act"))
         if first_after < last_issue:

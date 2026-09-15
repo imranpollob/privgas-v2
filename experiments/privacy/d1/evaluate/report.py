@@ -73,28 +73,33 @@ def plots(out_dir: Path, rules_by_n: List[Dict[str, Any]], learned: List[Dict[st
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
 
-    # R2 timing rules, S0 vs S1
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
+    # R2 timing rules, S0 vs S1, one figure per credit baseline present
     attacks = ["rule.r2-uniform", "rule.r2-insertion-order-fifo", "rule.r2-nearest-prior-issuance",
                "rule.r2-window-k2", "rule.r2-shuffled-fifo-control"]
-    for ax, scen in zip(axes, ("S0-clean-shuffled", "S1-correlated-timing")):
-        for a in attacks:
-            pts = sorted((r["pool_size"], r["rule_top1"]) for r in rules_by_n
-                         if r["relation"] == "R2" and r["scenario_id"] == scen and r["attack"] == a)
-            if pts:
-                ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o",
-                        label=a.replace("rule.r2-", ""))
-        ax.set_xscale("log", base=2)
-        ax.set_title(f"B3 R2 timing rules — {SCEN[scen]}")
-        ax.set_xlabel("pool size N")
-        ax.grid(alpha=0.3)
-    axes[0].set_ylabel("top-1 success")
-    axes[1].legend(fontsize=7)
-    fig.tight_layout()
-    p = out_dir / "r2_timing_rules_s0_vs_s1.png"
-    fig.savefig(p, dpi=150)
-    plt.close(fig)
-    written.append(p.name)
+    for b, fname in (("B3-PrivGas-v1", "r2_timing_rules_s0_vs_s1.png"),
+                     ("B4-CrossAccount", "r2_timing_rules_s0_vs_s1_b4.png")):
+        if not any(r["relation"] == "R2" and r["baseline_id"] == b for r in rules_by_n):
+            continue
+        fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
+        for ax, scen in zip(axes, ("S0-clean-shuffled", "S1-correlated-timing")):
+            for a in attacks:
+                pts = sorted((r["pool_size"], r["rule_top1"]) for r in rules_by_n
+                             if r["relation"] == "R2" and r["baseline_id"] == b
+                             and r["scenario_id"] == scen and r["attack"] == a)
+                if pts:
+                    ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o",
+                            label=a.replace("rule.r2-", ""))
+            ax.set_xscale("log", base=2)
+            ax.set_title(f"{b} R2 timing rules — {SCEN[scen]}")
+            ax.set_xlabel("pool size N")
+            ax.grid(alpha=0.3)
+        axes[0].set_ylabel("top-1 success")
+        axes[1].legend(fontsize=7)
+        fig.tight_layout()
+        p = out_dir / fname
+        fig.savefig(p, dpi=150)
+        plt.close(fig)
+        written.append(p.name)
 
     # learned CE by feature set (loro, primary)
     sets = ["none", "T", "T+AA", "G", "T+G", "T+AA+G", "G-minus-eq", "T+G-minus-eq"]
@@ -125,7 +130,7 @@ def plots(out_dir: Path, rules_by_n: List[Dict[str, Any]], learned: List[Dict[st
 
     # R3 negative control: top-1 vs chance by N
     fig, ax = plt.subplots(figsize=(7, 3.8))
-    for b in ("B0", "B1", "B2-Signature", "B2-Allowlist", "B3-PrivGas-v1"):
+    for b in ("B0", "B1", "B2-Signature", "B2-Allowlist", "B3-PrivGas-v1", "B4-CrossAccount"):
         pts = sorted((r["pool_size"], r["top1"]) for r in learned_by_n
                      if r["relation"] == "R3" and r["baseline_id"] == b
                      and r["scenario_id"] == "S0-clean-shuffled" and r["fold_kind"] == "loro"
@@ -215,9 +220,9 @@ def markdown(ctx: Mapping[str, Any]) -> str:
                         _f(r["candidate_set_reduction"])]
                        for r in rules if r["attack_kind"] in ("exact", "control")]))
     s.append("\n#### R2 timing rules by pool size\n")
-    s.append(md_table(["scen.", "rule", "N", "top-1", "top-3", "top-5", "coverage",
+    s.append(md_table(["baseline", "scen.", "rule", "N", "top-1", "top-3", "top-5", "coverage",
                        "precision", "reduction", "chance top-1"],
-                      [[SCEN[r["scenario_id"]], r["attack"].replace("rule.r2-", ""),
+                      [[r["baseline_id"], SCEN[r["scenario_id"]], r["attack"].replace("rule.r2-", ""),
                         str(r["pool_size"]), _f(r["rule_top1"]), _f(r["top3"]), _f(r["top5"]),
                         _f(r["coverage"]), _f(r["precision"]), _f(r["candidate_set_reduction"]),
                         _f(r["chance_top1"])]
@@ -261,7 +266,9 @@ def markdown(ctx: Mapping[str, Any]) -> str:
                       [[r["baseline_id"], SCEN[r["scenario_id"]], r["pair"], str(r["runs"]),
                         _f(r["mean_rho"]), _f(r["z"], 2)] for r in ctx["harness"]["combined"]
                        if r["pair"].startswith("slot~") or r["pair"] in
-                       ("issue~act", "deliver~act", "fund~act", "prepare~act")]))
+                       ("issue~act", "deliver~act", "fund~act", "prepare~act",
+                        "setup~setup_issuer", "setup_issuer~deliver", "setup_issuer~act",
+                        "fund~deliver", "issue~prepare")]))
     s.append("\nFigures: " + ", ".join(f"`figures/d1-pilot/{ctx['batch']}/{f}`"
                                         for f in ctx["figures"]))
     return "\n".join(s) + "\n"

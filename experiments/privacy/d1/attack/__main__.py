@@ -36,6 +36,10 @@ MAIN_SETS = (("none", ()), ("T", ("T",)), ("T+AA", ("T", "AA")), ("G", ("G",)),
              ("T+G", ("T", "G")), ("T+AA+G", ("T", "AA", "G")))
 ABLATIONS = ("timing", "gas", "eq", "pm", "app")
 R2_EXTRA = (("G", "eq"), ("T+G", "eq"), ("T+G", "timing"))
+#: Pre-registered 2026-09-15 for the B3 vs B4-CrossAccount ablation (before its dataset was
+#: recorded): R2 timing features are family G, so "G-minus-eq" still carries timing. These
+#: selections of EXISTING registry features isolate gas / Paymaster-proof metadata.
+R2_EXTRA_MULTI = (("G", ("eq", "timing")), ("T+AA+G", ("eq", "timing")))
 #: L2 grid; the strength is chosen per (fold, relation, feature configuration) by inner
 #: leave-one-replicate-out cross-validation on that fold's TRAINING runs only (mean
 #: held-out log loss; ties -> the stronger penalty). Test runs never influence it.
@@ -58,6 +62,10 @@ def model_configs(relation: str) -> List[Dict[str, Any]]:
                 out.append({"feature_set": f"{name}-minus-{abl}",
                             "families": tuple(name.split("+")), "drop_sub": (abl,),
                             "drop_family": (), "convention": conv})
+            for name, abls in R2_EXTRA_MULTI:
+                out.append({"feature_set": name + "".join(f"-minus-{a}" for a in abls),
+                            "families": tuple(name.split("+")), "drop_sub": abls,
+                            "drop_family": (), "convention": conv})
     return out
 
 
@@ -65,7 +73,7 @@ def relations_for(baseline_id: str) -> List[str]:
     out = []
     if baseline_id in ("B0", "B1"):
         out.append("R1")
-    if baseline_id == "B3-PrivGas-v1":
+    if baseline_id in ("B3-PrivGas-v1", "B4-CrossAccount"):
         out.append("R2")
     out.append("R3")
     return out

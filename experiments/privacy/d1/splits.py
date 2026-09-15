@@ -13,7 +13,7 @@ Fold kinds, per (baseline, scenario) group:
                    train = the other replicates (all pool sizes).
 * ``holdout-nMAX`` configuration holdout: test = the largest pool size (all
                    replicates), train = every smaller pool size.
-* ``transfer-S1-to-S0-rK`` / ``transfer-S0-to-S1-rK`` (B3 only): train on the
+* ``transfer-S1-to-S0-rK`` / ``transfer-S0-to-S1-rK`` (B3, B4-CrossAccount): train on the
                    other scenario's runs of the OTHER replicates, test on
                    replicate K of this scenario (actor-held-out as well).
 """
@@ -52,9 +52,9 @@ def build_splits(dataset_manifest: Mapping[str, Any]) -> Dict[str, Any]:
                           "scenario_id": s, "kind": "holdout",
                           "train_runs": [ref(r) for r in rs if r["pool_size"] < big],
                           "test_runs": [ref(r) for r in rs if r["pool_size"] == big]})
-    b3 = "B3-PrivGas-v1"
-    for src, dst in (("S1-correlated-timing", "S0-clean-shuffled"),
-                     ("S0-clean-shuffled", "S1-correlated-timing")):
+    for b3, src, dst in ((b, src, dst) for b in ("B3-PrivGas-v1", "B4-CrossAccount")
+                         for src, dst in (("S1-correlated-timing", "S0-clean-shuffled"),
+                                          ("S0-clean-shuffled", "S1-correlated-timing"))):
         if (b3, src) in groups and (b3, dst) in groups:
             for rep in sorted({r["replicate"] for r in groups[(b3, dst)]}):
                 # Still actor-held-out: the source scenario's runs of the SAME replicate

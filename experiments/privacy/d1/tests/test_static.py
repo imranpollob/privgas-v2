@@ -188,5 +188,61 @@ class TestBoundary(unittest.TestCase):
         self.assertIn("NEUTRAL", r.stdout, r.stderr)
 
 
+
+class TestB4CrossAccountReuse(unittest.TestCase):
+    """B4-CrossAccount reuses the B3 attack family unchanged (docs/d1-b4-results.md)."""
+    B3, B4 = "B3-PrivGas-v1", "B4-CrossAccount"
+
+    def test_r2_features_identical_to_b3(self):
+        f3 = [f.name for f in registry.features_for("R2", self.B3)]
+        f4 = [f.name for f in registry.features_for("R2", self.B4)]
+        self.assertEqual(f3, f4)
+        for conv in registry.CONVENTIONS:
+            for fams in (("G",), ("T", "G"), ("T", "AA", "G")):
+                for drop in ((), ("eq",), ("eq", "timing")):
+                    self.assertEqual(
+                        [f.name for f in registry.select("R2", self.B3, fams, conv, drop)],
+                        [f.name for f in registry.select("R2", self.B4, fams, conv, drop)])
+
+    def test_r3_differs_only_by_the_spender_equals_depositor_feature(self):
+        f3 = {f.name for f in registry.features_for("R3", self.B3)}
+        f4 = {f.name for f in registry.features_for("R3", self.B4)}
+        self.assertEqual(f3 - f4, {"r3_dir_vs_issuance_rank_g"})
+        self.assertEqual(f4 - f3, set())
+
+    def test_rules_identical_to_b3(self):
+        for rel in ("R2", "R3"):
+            self.assertEqual([r.rule_id for r in rules.rules_for(rel, self.B3)],
+                             [r.rule_id for r in rules.rules_for(rel, self.B4)])
+        ids = {r.rule_id for r in rules.rules_for("R2", self.B4)}
+        for pre_registered in ("rule.r2-announcer-eq-asset-sender", "rule.r2-shared-eth-funder",
+                               "rule.r2-shared-identifier-scan",
+                               "rule.r2-bootstrap-sender-eq-spend-sender"):
+            self.assertIn(pre_registered, ids)
+
+    def test_gas_proof_only_selection_has_no_timing_or_equality(self):
+        chosen = registry.select("R2", self.B4, ("G",), "primary", ("eq", "timing"))
+        self.assertTrue(chosen)
+        self.assertTrue(all(f.subfamily in ("gas", "pm") for f in chosen))
+
+    def test_splits_include_b4_transfer_folds_and_never_mix_baselines(self):
+        runs = []
+        for b in (self.B3, self.B4):
+            for s in ("S0-clean-shuffled", "S1-correlated-timing"):
+                for rep in ("r1", "r2", "r3"):
+                    for n in (4, 8):
+                        runs.append({"experiment_id": f"d1-pilot/{b.lower()}/{s}/n{n:02d}",
+                                     "run_id": f"20260915T000000Z-{rep}", "baseline_id": b,
+                                     "scenario_id": s, "pool_size": n, "replicate": rep,
+                                     "status": "recorded"})
+        body = splits.build_splits({"batch": "x", "runs": runs})
+        by_exp = {r["experiment_id"]: r["baseline_id"] for r in runs}
+        kinds = {(f["baseline_id"], f["kind"]) for f in body["folds"]}
+        self.assertIn((self.B4, "transfer"), kinds)
+        for f in body["folds"]:
+            used = {by_exp[e] for e, _ in f["train_runs"] + f["test_runs"]}
+            self.assertEqual(used, {f["baseline_id"]}, f["fold_id"])
+
+
 if __name__ == "__main__":
     unittest.main()

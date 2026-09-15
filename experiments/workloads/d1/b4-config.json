@@ -1,0 +1,60 @@
+{
+  "_comment": "D1 B4 causal ablation (docs/d1-b4-results.md): frozen B3-PrivGas-v1 vs B4-CrossAccount under matched conditions. Every other key is copied verbatim from pilot-config.json (a test asserts equality); run seeds derive from the same secret master seed, so B3 runs here are the pilot's B3 runs regenerated and B4 runs share their actors, asset senders, spender accounts, Semaphore identities and schedule streams.",
+  "config_version": "1",
+  "evaluation_profile": "b3_compat_local",
+  "workload_id": "W1-cold",
+  "pool_sizes": [
+    4,
+    8,
+    16,
+    32
+  ],
+  "replicates": 3,
+  "variants": [
+    {
+      "baseline_id": "B3-PrivGas-v1",
+      "scenarios": [
+        "S0-clean-shuffled",
+        "S1-correlated-timing"
+      ],
+      "role": "frozen PrivGas v1 (issuer account == spender account)"
+    },
+    {
+      "baseline_id": "B4-CrossAccount",
+      "scenarios": [
+        "S0-clean-shuffled",
+        "S1-correlated-timing"
+      ],
+      "role": "ablation: same frozen contracts, issuer account != spender account"
+    }
+  ],
+  "actor_setup": {
+    "_comment": "Setup (identical for every baseline at one (replicate, pool size)): the faucet funds each actor's asset sender with ETH, and the W1 token holder of the unchanged W1 setup (the 'asset_sender' role key, here a token treasury that is not an actor) transfers each asset sender the W1 amount. Both in an independently shuffled order.",
+    "asset_sender_eth": "100000000000000000"
+  },
+  "b3": {
+    "_comment": "Bootstrap callGasLimit for the pilot. The single-actor W1 value (160,000) covers only the first CreditPool insertion: frozen CreditPool.deposit executes PoseidonT3 hashing whose gas grows with the LeanIMT (measured 2026-09-15 with eth_estimateGas on the frozen contracts: 143,327 gas as an EOA call at tree size 0, 192,782 at size 1, up to 400,442 at size 31). One fixed value large enough for size 31 is used for every Bootstrap operation at every pool size, so Bootstrap UserOperation fields do not vary with the insertion position; EntryPoint v0.9.0 charges its 10% unused-execution-gas penalty on shallow insertions (a cost effect, recorded). BootstrapPaymaster's frozen cap (requiredPrefund <= 0.005 ETH) holds: (300,000 + 450,000 + PVG + 60,000) * 2 gwei < 0.002 ETH. The protocol is unchanged.",
+    "bootstrap_call_gas_limit": "450000"
+  },
+  "schedule": {
+    "_comment": "Chain time is set explicitly for every block (anvil --timestamp genesis, a fixed 12 s interval during setup, anvil_setNextBlockTimestamp afterwards), so no wall-clock artefact (proof generation, RPC latency) reaches a block timestamp. The instrumented bundler's A2 timestamps use the same simulated clock. Units: seconds.",
+    "genesis_timestamp": 1767225600,
+    "setup_block_interval": 12,
+    "phase_gap": 21600,
+    "S0-clean-shuffled": {
+      "_comment": "Every phase (actor setup, asset delivery, gas funding / admission, B3 issuance, wallet preparation incl. proof generation, application action) uses its own independent uniformly random permutation of the actors, and each event's start is the previous event's start plus an independent exponential gap. No order or delay is a function of actor identity or of another phase's order.",
+      "mean_gap": 600
+    },
+    "S1-correlated-timing": {
+      "_comment": "One uniformly random actor order drives every phase. Actor k arrives at A_k (exponential inter-arrivals); asset delivery at A_k, funding/admission at A_k + 300, issuance (B3 Bootstrap) at A_k + 900. Every issuance precedes every action (the clean single-root schedule of S0 is kept); the action of actor k happens at A_k + action_offset + U(-jitter, +jitter), with action_offset = (last issuance time - first arrival) + phase_gap, so actions follow the arrival order up to local swaps.",
+      "mean_interarrival": 600,
+      "funding_after_arrival": 300,
+      "issuance_after_arrival": 900,
+      "action_jitter": 900
+    }
+  },
+  "b4": {
+    "_comment": "B4-CrossAccount actor workflow. asset_sender -> W1T to the SPENDER account; issuer_funder -> announceAndFund(ISSUER account); ISSUER account: Bootstrap (initCode + CreditPool.deposit(commitment)); off-chain witness handoff (ground truth only); SPENDER account: Spend (initCode, because nothing deployed it earlier, + the W1 application call, CreditPaymaster, proof over its own userOpHash). The faucet funds each issuer funder with the same ETH value it sends each asset sender, in an order independent of every other setup and workflow order. No transaction ever joins an issuer and a spender.",
+    "issuer_funder_eth": "100000000000000000"
+  }
+}

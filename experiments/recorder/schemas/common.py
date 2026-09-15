@@ -237,7 +237,8 @@ def envelope_fields(*, scenario_nullable: bool) -> Tuple[FieldSpec, ...]:
                   "0-based position of this row within its stream for this run."),
         FieldSpec("baseline_id", _check_baseline_id, CLASS_PUBLIC, "A0",
                   "Which baseline produced the row (B0, B1, B2-Allowlist, "
-                  "B2-Signature, B3-PrivGas-v1, B4..B6). The experimental "
+                  "B2-Signature, B3-PrivGas-v1, B4-CrossAccount (5.1.0), reserved "
+                  "B4..B6). The experimental "
                   "condition, known to the attacker by construction."),
         FieldSpec("workload_id", _check_workload_id, CLASS_PUBLIC, "A0",
                   "Canonical workload (docs/research-plan.md Sec. 4): W1-cold "
@@ -309,6 +310,22 @@ def rule_workload_matches_baseline(record: Mapping[str, Any], stream: str) -> No
                 f"baseline {record['baseline_id']} has no account to deploy",
                 stream=stream, field="workload_id",
                 code="baseline_capability_violation")
+
+
+def rule_baseline_exists_in_schema_version(record: Mapping[str, Any], stream: str) -> None:
+    """A baseline id added in a later MINOR version is not valid under an earlier one."""
+    b, v = record.get("baseline_id"), record.get("schema_version")
+    need = baselines.BASELINE_MIN_SCHEMA.get(b) if isinstance(b, str) else None
+    if need is None or not isinstance(v, str):
+        return
+    try:
+        older = tuple(int(x) for x in v.split(".")) < tuple(int(x) for x in need.split("."))
+    except ValueError:
+        return  # malformed versions are reported by the schema_version field check
+    if older:
+        raise RecordValidationError(
+            f"baseline {b!r} is defined from schema {need}; a {v} row cannot name it",
+            stream=stream, field="baseline_id", code="unknown_baseline")
 
 
 def rule_record_id_matches(record: Mapping[str, Any], stream: str) -> None:

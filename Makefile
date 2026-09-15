@@ -12,7 +12,7 @@ ENTRYPOINT_VERSION ?= unset
         recorder-test recorder-examples recorder-selfcheck recorder-docs \
         baselines-build baselines-test run-matched-baselines calibrate-pvg \
         b3-eval-build b3-prover-install b3-eip170-test run-b3-evaluation \
-        d1-test d1-pilot-run d1-pilot-attack d1-registry-docs
+        d1-test d1-pilot-run d1-pilot-attack d1-registry-docs d1-b4-run d1-b4-attack
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
@@ -123,6 +123,19 @@ d1-pilot-attack: ## Splits -> self-check -> training labels -> attacks -> scorin
 	@test -d results/d1-pilot/$(BATCH)/training_labels || python3 -m experiments.privacy.d1.evaluate export-training-labels --batch $(BATCH)
 	@python3 -m experiments.privacy.d1.attack run --batch $(BATCH) --round $(ROUND)
 	@python3 -m experiments.privacy.d1.evaluate score --batch $(BATCH) --round $(ROUND) --write-doc
+
+# --- D1 B4 causal ablation: B3-PrivGas-v1 vs B4-CrossAccount (docs/d1-b4-results.md) -------
+d1-b4-run: baselines-build b3-eval-build b3-prover-install ## Run + record B3 vs B4-CrossAccount (S0/S1, N=4..32, 3 reps): make d1-b4-run SEED_FILE=data/private/d1-pilot/master_seed.txt BATCH=<utc stamp>
+	@if [ -z "$(SEED_FILE)" ] || [ -z "$(BATCH)" ]; then echo "ERROR: SEED_FILE and BATCH are required"; exit 1; fi
+	@python3 -m experiments.workloads.d1 --config b4 --master-seed-file $(SEED_FILE) --batch $(BATCH) --no-build
+
+d1-b4-attack: ## Splits -> self-check -> training labels -> attacks -> scoring into docs/d1-b4-results.md: make d1-b4-attack BATCH=<batch> ROUND=<round>
+	@if [ -z "$(BATCH)" ] || [ -z "$(ROUND)" ]; then echo "ERROR: BATCH and ROUND are required"; exit 1; fi
+	@test -f results/d1-pilot/$(BATCH)/splits.json || python3 -m experiments.privacy.d1.attack splits --batch $(BATCH)
+	@python3 -m experiments.privacy.d1.evaluate selfcheck --batch $(BATCH)
+	@test -d results/d1-pilot/$(BATCH)/training_labels || python3 -m experiments.privacy.d1.evaluate export-training-labels --batch $(BATCH)
+	@python3 -m experiments.privacy.d1.attack run --batch $(BATCH) --round $(ROUND)
+	@python3 -m experiments.privacy.d1.evaluate score --batch $(BATCH) --round $(ROUND) --write-doc --doc b4
 
 benchmark: ## Run the benchmark suite (placeholder until protocol code exists)
 	@echo "No benchmarks defined yet — add them under experiments/ and wire this target"

@@ -26,6 +26,10 @@ ENTRYPOINT_SOURCE_REPO = "https://github.com/eth-infinitism/account-abstraction"
 STANDARD_PROFILE = "eip170_standard"
 B3_COMPAT_PROFILE = "b3_compat_local"
 B3_BASELINE_ID = "B3-PrivGas-v1"
+#: Cross-account ablation of B3 (D1 multi-actor workload only; docs/d1-b4-results.md).
+B4_CROSS_ACCOUNT_ID = "B4-CrossAccount"
+#: Baselines that run the frozen B3 credit contracts (Bootstrap + Spend).
+CREDIT_BASELINE_IDS = (B3_BASELINE_ID, B4_CROSS_ACCOUNT_ID)
 
 #: (baseline_id, workload_id) -> experiment_id on the eip170_standard profile.
 #: B0 has no warm variant (an EOA has nothing to pre-deploy); B2 warm variants
@@ -64,6 +68,7 @@ PAYMASTER_OF = {
     # The Paymaster of B3's measured W1 application operation (Spend). B3's
     # Bootstrap operation is sponsored by BootstrapPaymaster.
     B3_BASELINE_ID: "CreditPaymaster",
+    B4_CROSS_ACCOUNT_ID: "CreditPaymaster",
 }
 
 #: Every Paymaster contract that can exist in a W1 environment.

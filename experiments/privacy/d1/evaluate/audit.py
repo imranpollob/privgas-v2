@@ -39,6 +39,11 @@ def _public_phase_orders(root: Path, exp: str, run: str, priv: Mapping[str, Any]
     rows = [json.loads(l) for l in rp.public_events_path.read_text().splitlines() if l.strip()]
     slot_by_account = {a["recipient_account"].lower(): a["slot"] for a in priv["actors"]}
     slot_by_sender = {a["asset_sender_address"].lower(): a["slot"] for a in priv["actors"]}
+    # B4-CrossAccount: the issuer account (announced, bootstraps) and its admission payer
+    slot_by_issuer = {a["issuer_account"].lower(): a["slot"] for a in priv["actors"]
+                      if a.get("issuer_account")}
+    slot_by_issuer_funder = {a["issuer_funder_address"].lower(): a["slot"]
+                             for a in priv["actors"] if a.get("issuer_funder_address")}
     dest = priv["roles"]["destination"].lower()
     orders: Dict[str, List[int]] = defaultdict(list)
     boot_txs = {r["transaction_hash"] for r in rows if r.get("calldata_class") == "pool_deposit"}
@@ -55,12 +60,16 @@ def _public_phase_orders(root: Path, exp: str, run: str, priv: Mapping[str, Any]
                 orders["fund"].append(slot_by_account[r["target"]])
             elif r["target"] in slot_by_sender:
                 orders["setup"].append(slot_by_sender[r["target"]])
+            elif r["target"] in slot_by_issuer_funder:
+                orders["setup_issuer"].append(slot_by_issuer_funder[r["target"]])
         elif cc == "paymaster_policy":
             orders["fund"].append(slot_by_account[r["subject_account"]])
         elif cc == "stealth_announce_and_fund":
-            orders["fund"].append(slot_by_account[r["subject_account"]])
+            sub = r["subject_account"]
+            orders["fund"].append(slot_by_issuer[sub] if sub in slot_by_issuer
+                                  else slot_by_account[sub])
         elif et == "user_operation_event":
-            s = slot_by_account[r["sender"]]
+            s = slot_by_issuer.get(r["sender"], slot_by_account.get(r["sender"]))
             orders["issue" if r["transaction_hash"] in boot_txs else "act"].append(s)
     return dict(orders)
 
@@ -74,6 +83,8 @@ def harness_audit(root: Path, runs: List[Mapping[str, Any]]) -> Dict[str, Any]:
         priv = private_run(root, exp, run)
         sched_orders: Dict[str, List[int]] = defaultdict(list)
         sched_orders["setup"] = list(priv["schedule"]["orders"]["setup"])
+        if "setup_issuer" in priv["schedule"]["orders"]:
+            sched_orders["setup_issuer"] = list(priv["schedule"]["orders"]["setup_issuer"])
         for t, phase, slot in priv["schedule"]["events"]:
             sched_orders[phase].append(slot)
         pub = _public_phase_orders(root, exp, run, priv)
@@ -89,7 +100,8 @@ def harness_audit(root: Path, runs: List[Mapping[str, Any]]) -> Dict[str, Any]:
             rho = spearman(slots, sched_orders[p])
             entry["rho"][f"slot~{p}"] = rho
             acc[(r["baseline_id"], r["scenario_id"], f"slot~{p}")].append((rho, n))
-        onchain = [p for p in ("setup", "deliver", "fund", "issue", "prepare", "act")
+        onchain = [p for p in ("setup", "setup_issuer", "deliver", "fund", "issue", "prepare",
+                               "act")
                    if p in sched_orders]
         for i, p in enumerate(onchain):
             for q in onchain[i + 1:]:
@@ -127,8 +139,10 @@ def split_audit(root: Path, batch: str, split_body: Mapping[str, Any], split_sha
             s = set()
             for a in priv["actors"]:
                 for k in ("asset_sender_address", "recipient_key_address", "recipient_account",
-                          "wallet_address"):
-                    s.add(a[k].lower())
+                          "wallet_address", "issuer_key_address", "issuer_account",
+                          "issuer_funder_address"):
+                    if a.get(k):
+                        s.add(a[k].lower())
             actor_addrs[key] = s
         return actor_addrs[key]
 

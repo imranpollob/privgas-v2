@@ -290,7 +290,7 @@ evidence of distinct honest participants.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4..B6). The experimental condition, known to the attacker by construction. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4-CrossAccount (5.1.0), reserved B4..B6). The experimental condition, known to the attacker by construction. |
 | `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | required | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
@@ -467,7 +467,7 @@ code rather than frozen into the raw record.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4..B6). The experimental condition, known to the attacker by construction. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4-CrossAccount (5.1.0), reserved B4..B6). The experimental condition, known to the attacker by construction. |
 | `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | `null` ok | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
@@ -547,6 +547,7 @@ Derived from `docs/research-plan.md` §5 and enforced by the validator
 | B2-Allowlist observable allowlist Paymaster (auxiliary) | yes | yes | yes | no | no |
 | B2-Signature signature-verifying Paymaster | yes | yes | yes | no | no |
 | B3-PrivGas-v1 frozen PrivGas v1 specimen (`b3_compat_local` profile only) | yes | yes | yes | yes | yes |
+| B4-CrossAccount cross-account ablation of B3 (`b3_compat_local` only; 5.1.0) | yes | yes | yes | yes | yes |
 | B4 independent credit (reserved) | yes | yes | yes | yes | yes |
 | B5 prior-art prepaid (reserved) | yes | yes | yes | yes | yes |
 | B6 shielded-pool reference (reserved, provisional) | no | no | no | yes | yes |
@@ -602,7 +603,7 @@ which wrongly made a public on-chain value look A2-only.
 | `run_id` | public | A0 | required | One execution of one experiment. UTC-timestamp shaped; prefixed 'synthetic-' for non-measured fixture runs. |
 | `record_id` | public | A0 | required | Stable per-row identity, '<run_id>/<stream>/<seq>'. This is the join key that frozen predictions refer to. |
 | `seq` | public | A0 | required | 0-based position of this row within its stream for this run. |
-| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4..B6). The experimental condition, known to the attacker by construction. |
+| `baseline_id` | public | A0 | required | Which baseline produced the row (B0, B1, B2-Allowlist, B2-Signature, B3-PrivGas-v1, B4-CrossAccount (5.1.0), reserved B4..B6). The experimental condition, known to the attacker by construction. |
 | `workload_id` | public | A0 | required | Canonical workload (docs/research-plan.md Sec. 4): W1-cold (primary ERC-20 W1; a smart account is deployed by the measured operation), W1-warm (AA-only ablation; account deployed beforehand), W2 ERC-721, W3 native ETH, W4 repeated actions. Like baseline_id this is an experimental condition the attacker knows by construction, not a hidden label. |
 | `scenario_id` | public | A0 | `null` ok | Opaque identifier for the scenario / candidate set this row belongs to. Must carry no meaning: it is visible to the attacker, so an id like 'actor7-links-wallet3' would be a label leak. null only where a row is genuinely not scenario-scoped. |
 | `software_revision` | public | A0 | required | Reproducibility identity of the code that produced the row: a real commit SHA when the worktree is clean, otherwise an explicit working-tree digest. Never a manufactured hash. |
@@ -781,9 +782,19 @@ it as a privacy finding.
 
 ## 9. Schema versioning
 
-`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`5.0.0`**.
+`schema_version` is `MAJOR.MINOR.PATCH`; the current version is **`5.1.0`** (`5.0.0` rows
+remain readable).
 
 ### 9.0 Change log
+
+- **`5.1.0`** (2026-09-15) — `baseline_id` gains `"B4-CrossAccount"`, the
+  cross-account causal ablation of the frozen B3 specimen (same contracts and proofs;
+  the issuing and redeeming public accounts differ; `docs/d1-b4-results.md`). It is
+  NOT the reserved `B4` prototype of `docs/research-plan.md` §5, which keeps its own
+  id. MINOR: one new enum member; `SUPPORTED_SCHEMA_VERSIONS` is `{5.0.0, 5.1.0}`, and
+  a new cross-field rule rejects a `5.0.0` row that names the new id
+  (`baselines.BASELINE_MIN_SCHEMA`). No field, rule or meaning of an existing value
+  changed; no `5.0.0` data was rewritten.
 
 - **`5.0.0`** (2026-09-15) — the frozen B3 specimen becomes measurable
   (`docs/b3-evaluation.md`). MAJOR because an enum value was renamed and a

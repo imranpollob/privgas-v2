@@ -14,6 +14,11 @@ Ground truth, per actor (``subject_kind = operation``):
 * B3-PrivGas-v1: the Spend row (R2 observed: the actor's issuance; anchors
   carry the actor's Bootstrap op, commitment and nullifier) and the Bootstrap
   row (R2 absent), both with R1 = sponsor wallet, R3 = actor.
+* B4-CrossAccount: the same two rows, but they are about two different accounts
+  of the actor: the Spend row's stealth account is the SPENDER account (its
+  handle and address), the Bootstrap row's is the ISSUER account. R2 of the
+  Spend is the issuance made by the actor's issuer account -- the private
+  issuer <-> spender handoff exists only here, in ground truth.
 
 Candidate-set ids: ``r1-funders``, ``r2-issuances``, ``r3-wallets``.
 
@@ -133,7 +138,8 @@ def ground_truth_rows(result: PilotRunResult, record_ids_by_tx: Dict[str, List[s
                                 "public_event_record_ids": record_ids_by_tx.get(app_tx, [])}))
             continue
 
-        # B3-PrivGas-v1
+        # B3-PrivGas-v1 / B4-CrossAccount
+        is_b4 = s.baseline_id == "B4-CrossAccount"
         boot_label = ops_by_slot[slot]["bootstrap"]
         boot_hash = by_label[boot_label]["userop_hash"]
         boot_tx = tx_of_label[boot_label]
@@ -153,9 +159,14 @@ def ground_truth_rows(result: PilotRunResult, record_ids_by_tx: Dict[str, List[s
                 (boot_hash, boot_tx, contracts["BootstrapPaymaster"],
                  RelationLabel("R2", "absent", subject_ref=boot_hash,
                                candidate_set_id=CANDIDATE_SETS["R2"]))):
+            row_common, row_anchors = b3_common, base_anchors
+            if is_b4 and ref == boot_hash:
+                # The Bootstrap row is about the issuer account, not the spender account.
+                row_common = dict(b3_common, stealth_account_id=a["issuer_handle"])
+                row_anchors = dict(base_anchors, stealth_account_address=a["issuer_account"])
             rows.append(GroundTruth(
-                **b3_common, r1=r1(ref), r2=r2, r3=r3(ref),
-                public_anchors={**base_anchors, **credit_anchors,
+                **row_common, r1=r1(ref), r2=r2, r3=r3(ref),
+                public_anchors={**row_anchors, **credit_anchors,
                                 "immediate_gas_payer_address": pm, "transaction_hash": tx,
                                 "userop_hash": ref,
                                 "public_event_record_ids": record_ids_by_tx.get(tx, [])}))

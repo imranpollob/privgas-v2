@@ -64,6 +64,7 @@ from .common import (
     rule_record_id_matches,
     rule_synthetic_run_id_prefix,
     rule_workload_matches_baseline,
+    rule_baseline_exists_in_schema_version,
 )
 
 STREAM = "ground_truth"
@@ -441,6 +442,7 @@ SCHEMA = StreamSchema(
     cross_field_rules=(
         rule_synthetic_run_id_prefix,
         rule_workload_matches_baseline,
+        rule_baseline_exists_in_schema_version,
         rule_record_id_matches,
         _rule_credit_fields_match_relation_r2,
         _rule_payer_kind_matches_baseline,

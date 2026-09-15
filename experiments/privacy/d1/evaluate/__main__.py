@@ -20,16 +20,18 @@ from typing import Any, Dict, List, Optional
 
 from ....labels import scan_public_output
 from ....recorder.provenance import repo_root
-from . import audit, report, score
+from . import audit, paired, report, score
 from .labels_io import batch_dir, export_training_labels, load_splits_verified, private_run
 
-DOC = Path("docs") / "d1-pilot-results.md"
-BEGIN = "<!-- BEGIN GENERATED: d1-pilot-results -->"
-END = "<!-- END GENERATED: d1-pilot-results -->"
+DOCS = {"pilot": (Path("docs") / "d1-pilot-results.md", "d1-pilot-results"),
+        "b4": (Path("docs") / "d1-b4-results.md", "d1-b4-results")}
+CREDIT = ("B3-PrivGas-v1", "B4-CrossAccount")
 
 COMPARISONS = [("none", "T"), ("none", "G"), ("T", "T+AA"), ("T", "T+G"), ("T+AA", "T+AA+G"),
                ("T", "T+AA+G"), ("T+G", "T+AA+G"), ("none", "G-minus-eq"),
-               ("none", "T+G-minus-eq"), ("T", "T+G-minus-eq"), ("none", "T+G-minus-timing")]
+               ("none", "T+G-minus-eq"), ("T", "T+G-minus-eq"), ("none", "T+G-minus-timing"),
+               ("none", "T+AA+G-minus-eq"), ("none", "G-minus-eq-minus-timing"),
+               ("none", "T+AA+G-minus-eq-minus-timing")]
 ABLATIONS = [(f"T+AA+G-minus-{a}", "T+AA+G") for a in ("timing", "gas", "eq", "pm", "app")]
 
 
@@ -49,7 +51,7 @@ def cmd_selfcheck(root: Path, batch: str) -> Dict[str, Any]:
             "value_scan": True, "ok": not findings}
 
 
-def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool) -> int:
+def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool, doc: str = "pilot") -> int:
     manifest, runs = _runs(root, batch)
     sc = cmd_selfcheck(root, batch)
     if not sc["ok"]:
@@ -101,7 +103,7 @@ def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool) -> int:
         if key not in seen and spec["scenario_id"] == "S0-clean-shuffled":
             seen.add(key)
             r1_rows.append(st)
-            is_b3 = spec["baseline_id"] == "B3-PrivGas-v1"
+            is_b3 = spec["baseline_id"] in CREDIT
             cand_rows.append({
                 "baseline_id": spec["baseline_id"], "pool_size": spec["pool_size"],
                 "eligible_actors": spec["pool_size"],
@@ -129,7 +131,7 @@ def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool) -> int:
         "r3_above_chance_flags": len(r3_flags),
         "b3_clean_candidate_set_gt_1": all(c["r2_candidates"] != "n/a" and c["r2_candidates"] > 1
                                            for c in cand_rows
-                                           if c["baseline_id"] == "B3-PrivGas-v1"),
+                                           if c["baseline_id"] in CREDIT),
         "runs_failed": manifest["runs_failed"],
     }
     dataset = defaultdict(lambda: {"recorded": 0, "failed": 0})
@@ -157,6 +159,20 @@ def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool) -> int:
                       ("r3_negative_control_flags.json", r3_flags)):
         (out / name).write_text(json.dumps(obj, indent=1, sort_keys=True, default=str) + "\n")
 
+    has_b4 = any(r["baseline_id"] == "B4-CrossAccount" for r in runs)
+    paired_ctx = None
+    if has_b4:
+        paired_ctx = {"paired": paired.paired_differences(rows), "paired_by_n": paired.paired_by_n(rows),
+                      "universe": paired.candidate_universe_check(rows), "deltas": deltas,
+                      "separation": paired.b4_separation_audit(root, runs)}
+        stops["b4_account_separation_ok"] = paired_ctx["separation"]["ok"]
+        stops["r2_candidate_universe_identical_across_attacks"] = paired_ctx["universe"]["ok"]
+        report.write_csv(out / "paired_b3_b4.csv", paired_ctx["paired"])
+        report.write_csv(out / "paired_b3_b4_by_n.csv", paired_ctx["paired_by_n"])
+        (out / "paired_b3_b4.json").write_text(json.dumps(
+            {k: v for k, v in paired_ctx.items() if k != "deltas"}, indent=1, default=str) + "\n")
+        (out / "stop_conditions.json").write_text(json.dumps(stops, indent=1, sort_keys=True) + "\n")
+
     figdir = root / "figures" / "d1-pilot" / batch
     figs = report.plots(figdir, rules_by_n, learned, deltas, learned_by_n)
     ctx = {"batch": batch, "round": round_id, "rules": rules, "rules_by_n": rules_by_n,
@@ -164,9 +180,13 @@ def cmd_score(root: Path, batch: str, round_id: str, write_doc: bool) -> int:
            "candidate_sets": cand_rows, "r1_structure": r1_rows, "stops": stops,
            "harness": harness, "figures": figs, "dataset": dataset_rows}
     md = report.markdown(ctx)
+    if paired_ctx is not None:
+        md += paired.markdown(paired_ctx, report.md_table)
     (out / "results.md").write_text(md)
     if write_doc:
-        report.write_generated(root / DOC, md, BEGIN, END)
+        path, marker = DOCS[doc]
+        report.write_generated(root / path, md, f"<!-- BEGIN GENERATED: {marker} -->",
+                               f"<!-- END GENERATED: {marker} -->")
     print(json.dumps(stops, indent=1))
     print(f"scored {len(rows)} subject predictions from {len(manifests)} frozen sets -> "
           f"{out.relative_to(root)}")
@@ -181,6 +201,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--round", default="a1")
     ap.add_argument("--root", default=None)
     ap.add_argument("--write-doc", action="store_true")
+    ap.add_argument("--doc", choices=sorted(DOCS), default="pilot",
+                    help="which results document receives the generated section")
     args = ap.parse_args(argv)
     root = Path(args.root) if args.root else repo_root()
     if args.command == "selfcheck":
@@ -192,7 +214,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         summary = export_training_labels(root, args.batch)
         print(f"exported training labels for {len(summary)} folds")
         return 0
-    return cmd_score(root, args.batch, args.round, args.write_doc)
+    return cmd_score(root, args.batch, args.round, args.write_doc, args.doc)
 
 
 if __name__ == "__main__":
