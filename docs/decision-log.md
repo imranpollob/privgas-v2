@@ -857,3 +857,175 @@ Format for each entry:
   inconsistent with the root timeline (`consistent = False`, counted); included Spend without
   nonce advance or failed Spend with nonce advance (raises); capacity exhaustion recorded as
   `HARNESS_CAPACITY_EXCEEDED`, never truncated.
+
+## 2026-09-16: D2 falsification pilot CLOSED; kill-condition phase opened in a new namespace
+
+- **Decision**: the D2 falsification pilot (`docs/d2-pilot-results.md`, batch `20260915T223607Z`,
+  code `experiments/liveness/d2/`) is **closed**. Its measurements are frozen: no number in that
+  document is regenerated, recomputed or re-derived by any later phase, and its tables are never
+  rewritten with changed semantics. The pilot's code is changed only for API compatibility and is
+  rerun only as a regression test.
+- **Every new experiment uses a new result namespace**: `d2-killcondition`
+  (`results/d2-killcondition/<batch>/`, `data/private/d2-killcondition/<batch>/`,
+  `figures/d2-killcondition/<batch>/`, code `experiments/liveness/d2k/`,
+  doc `docs/d2-killcondition-results.md`). The pilot's `d2-pilot` directories are never written by
+  it. The pilot's harness, contention engine, state machine, records tiers and D2-B measurement
+  helpers are **imported unchanged** rather than copied or rewritten.
+- **Why**: the pilot answered its own question (D2 case D) but explicitly did not test the D2 kill
+  condition in `docs/research-plan.md` §3 — whether ordinary bounded root history removes the
+  contention problem at realistic load with no significant tradeoff — and did not decompose the
+  D2-B gas growth. Those are the two questions of this phase.
+- **Alternatives considered**: extending the pilot batch in place (rejected: it would mix frozen
+  and new semantics in one table); re-running the pilot on this machine (rejected: unnecessary,
+  and it would overwrite reported numbers).
+
+## 2026-09-16: preVerificationGas recalibrated for a new machine; overheads unchanged
+
+- **Decision**: `baselines/w1_b0_b2/calibration/pvg-overhead.json` and
+  `pvg-overhead.b3_compat_local.json` were regenerated on the Linux machine that runs this phase.
+  The previous artifacts are kept verbatim in `baselines/w1_b0_b2/calibration/archive/` under their
+  creation stamp and machine.
+- **Why**: the calibration artifact is fingerprinted to the environment, and two fingerprint fields
+  changed on this machine (`anvil_version` build string — same commit SHA — and the `SimpleAccount`
+  artifact digest). `RecalibrationRequired` therefore blocked every live run. The dependency-tree
+  pins (`baselines/w1_b0_b2/dependency-pin.json`) still pass, so the compiled sources are identical.
+- **What did NOT change**: the measured EntryPoint unmeasured overheads are **identical** to the
+  archived ones — `empty_calldata` 13,708, `execute_call` 14,985, `execute_pool_deposit` 19,776 —
+  so no previously reported number depends on the recalibration. Recalibration was required to run,
+  not to change a measurement.
+
+## 2026-09-16: D2 kill-condition design and pre-registration (recorded before the final matrix)
+
+Pre-registered before `make d2k-run` produced the reported batch. Everything here is a *design*
+decision or a *threshold*; no result informed any of it except where explicitly stated.
+
+- **No B3 change.** `baselines/b3_privgas_v1` and `baselines/b3_eval` are untouched. The
+  experimental root-acceptance component is reached only through the frozen `CreditPool`'s own
+  constructor argument (`constructor(address _creditPaymaster, address _registry)`), so a D2K
+  environment is a second, complete, UNMODIFIED frozen deployment (`CreditPool`,
+  `BootstrapPaymaster`, `AnnouncementRegistry`) whose single difference is the address the pool
+  mirrors roots to. CreditPool semantics, the Bootstrap flow, the Semaphore verifier, proof message
+  binding, nullifier handling, the EntryPoint, the account implementation, Paymaster sponsorship
+  semantics and the W1 application call are all unchanged. No epoch roots, reservations, locking,
+  Semaphore redesign, production bundler or staking.
+- **D2-History-K** (`contracts/d2k/src/HistoryCreditPaymaster.sol`) is an EXPERIMENTAL variant, not
+  a proposed protocol. Its only intended semantic difference from the frozen `CreditPaymaster` is
+  step 3 of validation: accept the current root **and the previous K−1 roots** instead of the
+  current root only. Retention is a **K-slot ring buffer** with a refcount map and a write cursor:
+  a root enters on `mirrorRoot`, leaves when the slot it occupies is overwritten (the K-th update
+  after it), the current root counts toward K, lookup is one own-storage `SLOAD` (O(1) in K),
+  update is a fixed five-slot touch (O(1) in K), and the steady-state footprint is 2K + 1 non-zero
+  slots. Duplicate roots are refcounted, so retention never depends on eviction order. Root 0 is the
+  empty-slot sentinel and is never accepted. **K = 1 must reproduce frozen latest-root behaviour**;
+  that is a stop condition and is measured on the same chain, in the same trials, against the same
+  roots as the frozen contract itself.
+- **Append-only precondition, checked before interpreting old roots as safe.** `CreditPool` uses
+  `InternalLeanIMT._insert` only (never `_update` or `_remove`) and only ever sets `_eligible` /
+  `_used` to true; `AnnouncementRegistry.eligible` is likewise write-once-true. There is no
+  revocation or deletion path, so an older root is a prefix of later membership. Independently, the
+  nullifier scope is the CONSTANT `CREDIT_NULLIFIER_SCOPE`, so one credit yields the same nullifier
+  whichever retained root it proves against and an old root cannot enable a second spend. Both are
+  re-established experimentally (security invariants) rather than assumed.
+- **Paired comparison via a fan-out mirror.** A frozen `CreditPool` mirrors to exactly one
+  immutable address, so the contention experiments deploy `FanOutRootMirror` as that address and
+  fan out to the frozen `CreditPaymaster` plus one `HistoryCreditPaymaster` per K. Every variant
+  therefore sees the same deposits, the same roots and the same block order. The fan-out inflates
+  the Bootstrap's own gas, so **no gas, storage, code-size or overhead number is ever taken from a
+  fan-out deployment**: every §11 number comes from a DEDICATED deployment (one frozen CreditPool →
+  one Paymaster), exactly as B3 deploys.
+- **Bootstrap `callGasLimit` for the contention experiments is raised to 1,200,000** (override
+  recorded in `experiments/liveness/d2k/config.json` with its reason) because of the fan-out. Like
+  the pilot's 1,000,000 it is a wallet-side experimental parameter, never the frozen 160,000 and
+  never a proposed fix; it respects `BootstrapPaymaster`'s frozen 0.005 ETH cap at the W1 fee.
+- **Retention-aware engine reuse.** The frozen contention engine is reused; `HistoryTrial`
+  overrides exactly one method, `_root_changes_between`, so that only the K-th and later root
+  changes after the proof count as invalidating. Every call site in the frozen engine passes
+  `lo = t0`, which a static test pins. `capacity = 1` makes the override the identity.
+- **Analytical baseline.** Under Poisson root updates with μ = λ·T,
+  `P(valid | K) = Σ_{j<K} e^{−μ} μ^j / j!`, so `P(stale | K) = 1 − P(valid | K)`, reducing to
+  `1 − e^{−μ}` at K = 1. Every attempt record carries the model's prediction and whether the chain
+  agreed; **a single disagreement is a stop condition** (`check_model_agreement`).
+- **Pre-registered kill-condition thresholds** (`config.json → d2k.preregistered_thresholds`).
+  A capacity K "removes practical contention at negligible cost" iff all four hold:
+  1. stale-root failure: Wilson 95% upper bound **< 1 %**, pooled over all cells with
+     0 < λ·T ≤ 1;
+  2. Spend-validation overhead **< 5 %** of the frozen UserOperation's `actualGasUsed`;
+  3. root-update overhead **< 10 %** of the frozen Bootstrap UserOperation's `actualGasUsed`,
+     worst case over tested tree sizes (the `CreditPool.deposit`-frame fraction, always larger, is
+     reported beside it);
+  4. steady-state root-history storage **≤ 128 slots**.
+  *Refinement, stated plainly:* the four percentages were fixed before any D2K run. Their
+  **denominators** were made explicit after a reduced smoke run (one seed, K ∈ {1, 4, 32}, tree
+  sizes ≤ 15) showed that "overhead < x %" is ambiguous without one — a root-update delta of about
+  +33 k gas is ≈ 37 % of the deposit frame at tree size 0 and ≈ 6 % at size 255. No percentage was
+  changed, and the smallest-K answer is computed from the recorded batch, not from the smoke run.
+- **Decision rule, pre-registered.** CASE A (root history trivially solves D2-A) if a small bounded
+  K meets all four thresholds; CASE B if meaningful residual failures or meaningful
+  validation/storage/update cost remain; CASE C (D2-B is mostly a B3 parameter bug) if the
+  decomposition shows little fundamental scaling beyond a bad frozen limit; CASE D (D2-B is
+  structural) if Merkle insertion intrinsically scales against a fixed sponsorship budget.
+  Combined classifications (A+D, B+D, A+C, B+C) are allowed.
+- **Gas-decomposition architecture.** G0 = the frozen `CreditPool.deposit` frame inside a real
+  sponsored Bootstrap UserOperation (the pilot's own quantity, measured the same way); G1 = the
+  LeanIMT insertion alone, using the SAME `InternalLeanIMT` and the SAME deployed `PoseidonT3`, at
+  the same storage slots; G2 = publishing a changing root into a Paymaster-like contract with no
+  Merkle work; G3a/G3b = `CreditPool.deposit`'s surrounding logic with the insertion replaced,
+  without and with the tree's size/leaf bookkeeping; G4 = the external-call floor; G5 = one
+  `PoseidonT3.hash` delegatecall. Every G-series number is a CALL sub-frame, so no intrinsic-gas or
+  calldata accounting enters a comparison. **Benchmark-only simplification:** the benchmark pool's
+  registry address is an EOA, so eligibility can be granted without 256 announcements; both frozen
+  contracts take the registry as a constructor argument, so neither their code nor their eligibility
+  rule changes, and the announcement path is measured separately on the ordinary frozen deployment.
+- **Stop conditions checked in code**: frozen-CreditPool semantics needed for historical roots
+  (none: only a constructor argument); revoked/invalid membership reachable from an old root
+  (append-only, plus the security invariants); nullifier protection weakened (nullifier-reuse and
+  same-credit-twice invariants); K = 1 not reproducing frozen behaviour (measured side by side);
+  analytical K model inconsistent with the implementation (`check_model_agreement`, raises); the
+  benchmark using a different Merkle primitive (the LeanIMT bench root must equal the frozen pool's
+  root after the same insertions, checked); the decomposition failing to reproduce frozen behaviour
+  (G0 at each size must match the pilot's frozen curve); failed-grant behaviour not reproducing.
+- **Limitation recorded now, not after the fact**: this phase isolates protocol-state behaviour. No
+  ERC-7562 bundler, no staking, no public mempool, one bundler (ours), one chain configuration. If
+  bounded history survives the kill condition, production-bundler and staking compatibility are the
+  NEXT phase, and nothing here establishes them.
+
+## 2026-09-16: D2 kill-condition outcome — D2-A meets its kill condition; D2-B is C + D
+
+Recorded after the reported batch `20260916T055452Z`
+(`docs/d2-killcondition-results.md`). The classification rule was pre-registered above.
+
+- **D2-A — CASE A.** Bounded root history trivially solves it. The retention boundary is exact on
+  chain (a proof survives K − 1 root updates; 150/150 deterministic runs agreed with the model, and
+  0 of 7,000 stochastic attempts disagreed), K = 1 reproduces the frozen contract in every cell of
+  every experiment, and all eleven security invariants hold with real Groth16 proofs. **The smallest
+  K meeting every pre-registered threshold is K = 8**: 0/520 stale failures for 0 < λ·T ≤ 1 (Wilson
+  upper 0.73 %), +114 gas per Spend validation (+0.031 % of `actualGasUsed`, independent of K),
+  +32,630 gas per root update (≈ 8.3 % of a Bootstrap, worst tested size), 17 storage slots,
+  +1,196 bytes of runtime code, +258,337 gas of deployment. K = 4 misses only on the interval upper
+  bound (0.58 % point estimate, CI upper 1.68 %). **D2-A alone is engineering, not research**, and
+  must not be the main contribution of a paper.
+- **D2-B — CASE C + D.** C: the frozen 160,000 `callGasLimit` covers exactly one insertion into an
+  empty tree and the decomposition finds no B3-specific overhead beyond a flat 35,772 gas, so the
+  immediate symptom is a parameter bug. D: what remains is intrinsic — `LeanIMT._insert` costs one
+  61,337-gas `PoseidonT3.hash` delegatecall per set bit of the insertion index, and `deposit` gas is
+  that plus a constant to within a median 119 gas — running against a **fixed wei** sponsorship
+  budget, so the maximum sponsorable gas price falls as the pool grows (8.8 gwei at tree size 0,
+  5.0 gwei at 256 members, against an advertised 10 gwei cap that is unreachable everywhere).
+- **Refinement of a pilot claim.** The pilot called a failed Bootstrap's loss "non-recoverable". The
+  *sponsored grant* is indeed permanently consumed (`AA34 signature error` on a correctly nonced
+  retry) and the sponsor is charged 0.00061–0.00084 ETH, but the **credit is recoverable**: an
+  unsponsored UserOperation from the same account inserts the commitment for ≈ 0.0008 ETH out of the
+  vMin the registry already forwarded, with no externally funded EOA. The frozen
+  `BootstrapPaymaster`'s own source comment was correct. The pilot's number is unchanged; this is a
+  new measurement in a new batch, not a rewrite.
+- **No stop condition fired.** Historical-root acceptance needed no change to frozen `CreditPool`
+  semantics (only a constructor argument); membership is append-only so no old root can carry a
+  revoked state; nullifier protection is intact (same-credit-twice is rejected even against a
+  different retained root); K = 1 reproduced frozen behaviour; the analytical model never disagreed
+  with the implementation; the benchmark reproduced the frozen pool's root and its exact deposit
+  gas (121,763 at size 0, 562,428 at size 255 — the pilot's own figures) at both seeds; the
+  failed-grant behaviour reproduced 15/15.
+- **Consequence for the project.** Neither half of D2 carries a paper on its own. D2-A is closed as
+  a candidate contribution. D2-B retains one quantified systems boundary — privacy-state maintenance
+  scaling logarithmically against a fixed per-credit sponsorship budget — which is a finding, not a
+  direction. No next direction is chosen in this entry.

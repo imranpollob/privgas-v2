@@ -13,7 +13,8 @@ ENTRYPOINT_VERSION ?= unset
         baselines-build baselines-test run-matched-baselines calibrate-pvg \
         b3-eval-build b3-prover-install b3-eip170-test run-b3-evaluation \
         d1-test d1-pilot-run d1-pilot-attack d1-registry-docs d1-b4-run d1-b4-attack d1-s1b-run d1-s1b-attack \
-        d2-test d2-pilot-run d2-pilot-analyze
+        d2-test d2-pilot-run d2-pilot-analyze \
+        d2k-build d2k-contract-test d2k-test d2k-run d2k-analyze
 
 help: ## Show this help
 	@echo "privgas-v2 — available targets:"
@@ -29,7 +30,7 @@ install: ## Verify required tooling is present (no app dependencies exist yet)
 	@echo "(no contracts/circuits/app code has been added — see docs/decision-log.md)."
 	@echo "Run 'make env-report' for the full version report."
 
-test: scaffold-test recorder-test b3-eip170-test baselines-test d1-test d2-test ## Run the full test suite
+test: scaffold-test recorder-test b3-eip170-test baselines-test d1-test d2-test d2k-test ## Run the full test suite
 
 .PHONY: scaffold-test
 scaffold-test: ## Repository-layout and gitignore self-checks
@@ -195,6 +196,25 @@ d2-pilot-run: baselines-build b3-eval-build b3-prover-install ## Run the D2 pilo
 d2-pilot-analyze: ## Tables, statistics, figures and the generated block of docs/d2-pilot-results.md: make d2-pilot-analyze BATCH=<stamp>
 	@if [ -z "$(BATCH)" ]; then echo "ERROR: BATCH is required"; exit 1; fi
 	@python3 -m experiments.liveness.d2 analyze --batch $(BATCH) --write-doc
+
+# --- D2 kill-condition: bounded root history + gas decomposition (docs/d2-killcondition-results.md)
+# NEW result namespace `d2-killcondition`; the frozen D2 pilot batch is never regenerated.
+d2k-build: ## Compile the D2-History-K variant and the gas-decomposition benchmarks (contracts/d2k)
+	@cd contracts/d2k && forge build
+
+d2k-contract-test: d2k-build ## Ring-buffer retention mechanics (Foundry): boundary, duplicates, K=1, bounded storage
+	@cd contracts/d2k && forge test
+
+d2k-test: b3-eval-build d2k-build b3-prover-install ## D2K static + live tests (boundary, security invariants, benchmark primitive, grant, detection)
+	@python3 -m unittest discover -s experiments/liveness/d2k/tests -t .
+
+d2k-run: baselines-build b3-eval-build d2k-build b3-prover-install ## Run the kill-condition experiments: make d2k-run BATCH=<utc stamp> [EXP=all|hist|gas|<name>]
+	@if [ -z "$(BATCH)" ]; then echo "ERROR: BATCH is required"; exit 1; fi
+	@python3 -u -m experiments.liveness.d2k run --batch $(BATCH) $(foreach e,$(or $(EXP),all),--exp $(e))
+
+d2k-analyze: ## Tables, statistics, figures and the generated block of docs/d2-killcondition-results.md: make d2k-analyze BATCH=<stamp>
+	@if [ -z "$(BATCH)" ]; then echo "ERROR: BATCH is required"; exit 1; fi
+	@python3 -m experiments.liveness.d2k analyze --batch $(BATCH) --write-doc
 
 clean: ## Remove local, regenerable artifacts (does not touch data/private)
 	@echo "Cleaning regenerable artifacts..."

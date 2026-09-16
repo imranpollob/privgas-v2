@@ -54,15 +54,30 @@ adds on top of that, not just measure end-to-end linkability.
 - **Kill condition**: routine historical-root retention / staking fixes
   eliminate the problem at realistic load with no significant tradeoff —
   then this is engineering, not research (`research-plan.md` §3, D2).
-- **Status**: **primary direction since 2026-09-15.** Pilot complete on the frozen B3
-  specimen (`docs/d2-pilot-results.md`, batch `20260915T223607Z`): a Spend valid at bundler
-  simulation fails on chain (`AA33` / `RootMismatch`) when an unrelated Bootstrap mirrors a new
-  root; stale probability follows 1 − exp(−λ·T) with no pool-size effect; failures are
-  perfectly correlated across concurrent spenders and across a bundle; bundler-side
-  re-simulation removes ≈ 67 % of on-chain failures but not the submission→inclusion residue;
-  separately, the frozen Bootstrap `callGasLimit` covers only tree size 0. D2 case **D**
-  (both root contention and gas scaling matter). No defense designed; the kill condition
-  (bounded root history removes it at realistic load with no tradeoff) is **not yet tested**.
+- **Status**: **primary direction since 2026-09-15; kill condition tested 2026-09-16.**
+  - *Pilot* (closed, `docs/d2-pilot-results.md`, batch `20260915T223607Z`): a Spend valid at
+    bundler simulation fails on chain (`AA33` / `RootMismatch`) when an unrelated Bootstrap
+    mirrors a new root; stale probability follows 1 − exp(−λ·T) with no pool-size effect;
+    failures are perfectly correlated across concurrent spenders and across a bundle;
+    bundler-side re-simulation removes ≈ 67 % of on-chain failures but not the
+    submission→inclusion residue; separately, the frozen Bootstrap `callGasLimit` covers only
+    tree size 0. D2 case **D**.
+  - *Kill-condition test* (`docs/d2-killcondition-results.md`, batch `20260916T055452Z`): an
+    experimental bounded-root-history variant (`D2-History-K`, a K-slot ring buffer reached only
+    through the frozen `CreditPool`'s own constructor argument) removes the contention. The
+    retention boundary is exact — a proof survives K − 1 root updates, 150/150 deterministic runs
+    — K = 1 reproduces the frozen contract exactly, and all eleven security invariants hold with
+    real Groth16 proofs. **K = 8** meets every pre-registered threshold: 0/520 stale failures for
+    0 < λ·T ≤ 1 (Wilson upper 0.73 %), +114 gas per Spend validation (+0.031 %, independent of K),
+    +32.6 k gas per root update (≈ 8 % of a Bootstrap), 17 storage slots, +1,196 bytes of code.
+    **D2-A meets its kill condition — CASE A, engineering rather than research.** The gas
+    decomposition shows the pilot's ≈ 61 k per tree level is exactly one `PoseidonT3.hash`
+    delegatecall (61,337 gas measured alone) and that `CreditPool.deposit` = the LeanIMT insertion
+    + a flat 35,772 gas, so D2-B is **CASE C + D**: an obviously wrong frozen parameter on top of a
+    real logarithmic-gas-against-fixed-wei-budget boundary (the advertised 10 gwei cap is
+    unreachable at every tested tree size). **Neither half carries a paper on its own.** Not tested:
+    ERC-7562 validation rules, staking, a production bundler, and the anonymity-set cost of proving
+    against an older root.
 
 ## RQ3 (D3 — fallback B): Private actual-cost gas settlement
 

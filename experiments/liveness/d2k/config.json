@@ -1,0 +1,216 @@
+{
+  "_comment": "D2 kill-condition configuration (docs/d2-killcondition-results.md). Everything not listed here is INHERITED at run time from the frozen D2 pilot config (experiments/liveness/d2/pilot-config.json) and from baselines/w1_b0_b2/w1-config.json + baselines/b3_eval/b3-eval-config.json, so the two phases share the same chain, W1 and B3 parameters by construction rather than by copy. Values under `overrides` replace an inherited value and must state why. Both config digests are written into the batch manifest. Changing a value after a result is reported requires a docs/decision-log.md entry.",
+  "config_version": "1",
+  "namespace": "d2-killcondition",
+  "evaluation_profile": "b3_compat_local",
+  "seeds": [
+    2026091601,
+    2026091602,
+    2026091603,
+    2026091604,
+    2026091605
+  ],
+  "overrides": {
+    "d2a.bootstrap_call_gas_limit": {
+      "value": 1200000,
+      "why": "The contention experiments run on a FAN-OUT deployment, where one frozen CreditPool.deposit additionally forwards the new root to the frozen CreditPaymaster and to one HistoryCreditPaymaster per tested K (7 targets). That is a harness cost, not a protocol cost, and it raises the Bootstrap's execution gas above the pilot's experimental 1,000,000. Like the pilot's value this is a wallet-side parameter, never the frozen 160,000 baseline and never a proposed fix; it still respects BootstrapPaymaster's frozen 0.005 ETH cap at the W1 fee (sum of gas limits x 2 gwei ~= 0.0032 ETH). No gas number in the result document is taken from a fan-out deployment."
+    }
+  },
+  "d2k": {
+    "k_values": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32
+    ],
+    "deterministic_k_values": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "preregistered_thresholds": {
+      "_comment": "Recorded in docs/decision-log.md BEFORE the final matrix was collected (Section 12 of the phase brief). 'Negligible' is defined here, not after seeing results. The DENOMINATORS were made explicit after a reduced smoke run (1 seed, K in {1,4,32}, tree sizes <= 15) showed that 'overhead < x%' is ambiguous without one; the percentages themselves were not changed. See the decision-log entry of 2026-09-16.",
+      "stale_failure_rate_max": 0.01,
+      "validation_overhead_max_fraction": 0.05,
+      "root_update_overhead_max_fraction": 0.1,
+      "bounded_storage_max_total_slots": 128,
+      "stale_failure_metric": "upper end of the Wilson 95% interval of the measured stale-root failure rate, pooled over all cells with 0 < lambda*T <= stale_failure_region_max_lambda_T",
+      "stale_failure_region_max_lambda_T": 1.0,
+      "validation_overhead_metric": "(UserOperation actualGasUsed of a real included Spend with this variant - the same quantity for the frozen CreditPaymaster) / the frozen quantity, on dedicated deployments at the same pool size and proof depth",
+      "root_update_overhead_metric": "max over tested tree sizes of (Bootstrap UserOperation actualGasUsed with this variant - the same quantity for the frozen CreditPaymaster) / the frozen quantity. The whole sponsored operation is the denominator because that is what the sponsor pays; the CreditPool.deposit-frame fraction is reported alongside it and is always the larger of the two.",
+      "bounded_storage_metric": "steady-state non-zero storage slots of the Paymaster's root history (2K + 1 by construction, checked by contracts/d2k/test/HistoryRoots.t.sol)"
+    },
+    "boundary": {
+      "_comment": "Section 13: deterministic simulation -> inclusion race with an exact number of intervening root updates. Every variant is tested against the SAME intervening Bootstraps on the same chain.",
+      "pool_size": 8,
+      "intervening_root_updates": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        8
+      ],
+      "contender_capacity": 10
+    },
+    "security": {
+      "_comment": "Section 6: security invariants with real Groth16 proofs against the real frozen SemaphoreVerifier.",
+      "pool_size": 8,
+      "capacity_under_test": 8,
+      "contender_capacity": 12
+    },
+    "stochastic": {
+      "_comment": "Sections 9/10. Pool size is fixed at 16: the pilot measured no pool-size effect on D2-A (b2 = -0.008 +- 0.042). Every variant replays the SAME seeded arrival stream for the same trial index (common random numbers, paired).",
+      "pool_size": 16,
+      "lambdas": [
+        0,
+        0.25,
+        0.5,
+        1,
+        2
+      ],
+      "windows": [
+        0.25,
+        0.5,
+        1,
+        2,
+        5
+      ],
+      "trials_per_seed": 8,
+      "contender_capacity": 60
+    },
+    "retry": {
+      "_comment": "Section 10: retries / proofs / simulations / time to success per K, with the frozen bundler policy P0 and the pilot's retry cap.",
+      "pool_size": 16,
+      "lambdas": [
+        0.5,
+        1,
+        2
+      ],
+      "windows": [
+        1,
+        2,
+        5
+      ],
+      "trials_per_seed": 2,
+      "max_attempts": 10,
+      "contender_capacity": 140
+    },
+    "bundle": {
+      "_comment": "Section 14: bundle sizes sharing one proof root, with 0..K+1 intervening root updates, plus one stale operation in an otherwise valid bundle. EntryPoint bundling is NOT redesigned.",
+      "pool_size": 16,
+      "bundle_sizes": [
+        1,
+        2,
+        4,
+        8
+      ],
+      "k_values": [
+        1,
+        2,
+        4,
+        8
+      ],
+      "contender_capacity": 12
+    },
+    "overhead": {
+      "_comment": "Section 11. DEDICATED deployments only (one frozen CreditPool -> one Paymaster), never the fan-out. Root-update overhead is measured on a growing real tree; validation overhead on real included Spends with real proofs. spend_pool_size is a MINIMUM: the Spend is measured on the tree left by the root-update sweep (max(tree_sizes) + 1 members), so every variant proves at the same depth over the same members.",
+      "tree_sizes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        7,
+        8,
+        15,
+        16,
+        31
+      ],
+      "spend_pool_size": 16,
+      "spend_repeats": 3
+    }
+  },
+  "d2b_decomposition": {
+    "_comment": "Sections 16-19. G0 is the FROZEN CreditPool.deposit frame inside a REAL sponsored Bootstrap UserOperation -- the same quantity, measured the same way (callTracer sub-frame), as the frozen D2 pilot's D2-B table -- so the decomposition is anchored to a reproduction of frozen behaviour before anything is attributed. G1..G5 are frames inside a BenchRunner call, so every G-series number is a CALL sub-frame and no intrinsic-gas or calldata accounting enters a comparison. record_sizes are the sizes shown in the document; bootstrap_check_sizes additionally get a frozen-callGasLimit feasibility probe inside a reverted snapshot.",
+    "max_tree_size": 256,
+    "record_sizes": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64,
+      128,
+      256
+    ],
+    "bootstrap_check_sizes": [
+      0,
+      1,
+      2,
+      3,
+      7,
+      8,
+      15,
+      16,
+      31,
+      32,
+      63,
+      64,
+      127,
+      128,
+      255
+    ],
+    "seeds": [
+      2026091601,
+      2026091602
+    ],
+    "poseidon_samples": 8,
+    "frozen_envelope": {
+      "_comment": "Sections 20 and 23. The frozen callGasLimit is read from baselines/b3_eval/b3-eval-config.json at run time (never copied here). high_call_gas_limit is an EXPERIMENTAL measurement-mode value, never reported as frozen B3.",
+      "sizes": [
+        0,
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        128,
+        255
+      ],
+      "high_call_gas_limit": 1500000,
+      "required_limit_search": {
+        "low": 100000,
+        "high": 1500000,
+        "tolerance": 500
+      },
+      "fee_grid_gwei": [
+        1,
+        2,
+        4,
+        6,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    "grant": {
+      "_comment": "Section 21. Controlled failed Bootstraps on the FROZEN B3 deployment, with full before/after state.",
+      "attempts": 4,
+      "starved_call_gas_limits": [
+        160000,
+        100000,
+        40000
+      ],
+      "sufficient_call_gas_limit": 1500000
+    },
+    "g3_samples": 8
+  }
+}

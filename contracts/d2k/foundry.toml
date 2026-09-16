@@ -1,0 +1,25 @@
+# EXPERIMENTAL D2 kill-condition contracts (docs/d2-killcondition-results.md).
+#
+#   NON-PRODUCTION | EXPERIMENTAL-MITIGATION | EVALUATION-ONLY
+#
+# Nothing here modifies baselines/b3_privgas_v1 (pinned submodule, commit
+# 02a3f0abdb979446545aa87149080bfb44e43a3e) or baselines/b3_eval. This project
+# holds the D2-History-K experimental Paymaster variant and the gas-decomposition
+# benchmark contracts, and compiles them with settings identical to the frozen
+# specimen's own foundry.toml (solc 0.8.28, via-IR, optimizer 200) so a gas
+# comparison against the frozen CreditPool / CreditPaymaster is like-for-like.
+# Dependencies are NOT vendored a second time: the remappings point read-only
+# into B3's vendored lib/, which is what the frozen contracts compile against.
+[profile.default]
+src = "src"
+out = "out"
+libs = []
+test = "test"
+solc = "0.8.28"
+via_ir = true
+optimizer = true
+optimizer_runs = 200
+allow_paths = ["../../baselines/b3_privgas_v1"]
+
+[lint]
+lint_on_build = false

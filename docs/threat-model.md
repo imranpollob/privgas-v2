@@ -79,6 +79,16 @@ operator or a party fed its simulation results — because the harness has no pu
 no A0/A1 observer can see a pending Spend. Assumed honest: node, bundler, sponsor operator,
 provers. `b3_compat_local` only.
 
+D2 kill-condition test (2026-09-16, `docs/d2-killcondition-results.md`): the same tiers and the
+same assumed-honest parties as the D2 pilot (A0 chain, A2 our instrumented staged bundler; honest
+node, bundler, sponsor operator, provers; `b3_compat_local` only). The experimental
+`D2-History-K` Paymaster is measured under exactly those tiers and **no privacy claim is made for
+it**: whether an observer learns anything from *which* retained root a proof names, and how much
+anonymity a prover gives up by proving against an older root, are recorded as untested hypotheses,
+not results. No ERC-7562 tracer, no staking and no public mempool exist in this harness, so nothing
+there establishes ERC-7562 or production-bundler compatibility for the frozen contract or for the
+variant.
+
 D1 pilot (2026-09-15, `docs/d1-pilot-results.md`): attacks at A0 only, with auxiliary
 knowledge of the candidate wallet directory (R3) and a profiling attacker holding labelled
 training runs; all baselines on `b3_compat_local`.
